@@ -1,11 +1,16 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import AddDebtModal from "../components/dashboard/AddDebtModal";
 
-function DebtDetail({ debts, onMarkAsPaid }) {
+function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
   const { debtId } = useParams();
   const navigate = useNavigate();
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const debt = debts.find(d => d.id === debtId);
+  // Buscar deuda - dependencia del refreshTrigger fuerza re-render
+  const debt = debts.find(d => String(d.id) === String(debtId));
 
   if (!debt) {
     return (
@@ -30,51 +35,111 @@ function DebtDetail({ debts, onMarkAsPaid }) {
 
   // Cálculos detallados
   const totalPaid = debt.payments
-    .filter(p => p.paid)
-    .reduce((sum, p) => sum + p.amount, 0);
+    ?.filter(p => p.paid)
+    .reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
 
   const totalPending = debt.payments
-    .filter(p => !p.paid)
-    .reduce((sum, p) => sum + p.amount, 0);
+    ?.filter(p => !p.paid)
+    .reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
 
-  const paidInstallments = debt.payments.filter(p => p.paid).length;
-  const pendingInstallments = debt.payments.filter(p => !p.paid).length;
-  const progressPercentage = (paidInstallments / debt.payments.length) * 100;
+  const paidInstallments = debt.payments?.filter(p => p.paid).length || 0;
+  const pendingInstallments = debt.payments?.filter(p => !p.paid).length || 0;
+  const totalInstallments = debt.payments?.length || debt.installments || 0;
+  const progressPercentage = totalInstallments > 0 ? (paidInstallments / totalInstallments) * 100 : 0;
 
-  // Calcular interés pagado e interés pendiente
-  const interestPerInstallment = debt.totalInterest / debt.installments;
+  // Valores reales
+  const principal = debt.principal || debt.totalAmount || 0;
+  const totalInterest = debt.totalInterest || 0;
+  const interestRate = debt.interestRate || 0;
+  const interestPeriod = debt.interestPeriod || 'N/A';
+
+  const interestPerInstallment = totalInstallments > 0 ? totalInterest / totalInstallments : 0;
   const interestPaid = interestPerInstallment * paidInstallments;
-  const interestPending = debt.totalInterest - interestPaid;
+  const interestPending = totalInterest - interestPaid;
 
   const handlePay = (paymentId) => {
     onMarkAsPaid(debt.id, paymentId);
   };
 
-  // Tipo de interés en español
+  const handleEdit = (editedDebt) => {
+    onEditDebt(debt.id, editedDebt);
+    setIsEditModalOpen(false);
+    // Forzar re-render después de editar
+    setTimeout(() => {
+      setRefreshTrigger(prev => prev + 1);
+    }, 500);
+  };
+
+  const handleDelete = () => {
+    onDeleteDebt(debt.id);
+    navigate('/dashboard');
+  };
+
   const getInterestTypeLabel = (type) => {
     switch(type) {
       case 'unique': return 'Cargo único';
       case 'monthly': return 'Interés mensual';
       case 'annual': return 'Interés anual (TEA)';
+      case 'N/A': return 'Sin interés';
       default: return 'N/A';
     }
   };
 
   return (
     <div className="p-8 space-y-6 bg-gray-50 min-h-screen">
-      {/* Header */}
+      {/* Header con botones de acción */}
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold text-gray-800">Detalle de Deuda</h2>
           <p className="text-gray-500 mt-1">Información completa de tu deuda</p>
         </div>
-        <button
-          onClick={() => navigate(-1)}
-          className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center gap-2"
-        >
-          <span>←</span> Volver
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => navigate(-1)}
+            className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center gap-2"
+          >
+            <span>←</span> Volver
+          </button>
+          <button
+            onClick={() => setIsEditModalOpen(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+          >
+            <span>✏️</span> Editar
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 flex items-center gap-2"
+          >
+            <span>🗑️</span> Eliminar
+          </button>
+        </div>
       </div>
+
+      {/* Confirmación de eliminación */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex justify-center items-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="text-2xl font-bold text-gray-800 mb-2">Confirmar eliminación</h3>
+            <p className="text-gray-600 mb-6">
+              ¿Estás seguro de que deseas eliminar la deuda "{debt.name}"? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-semibold"
+              >
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Información básica */}
       <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow-lg p-6 text-white">
@@ -112,7 +177,7 @@ function DebtDetail({ debts, onMarkAsPaid }) {
             ></div>
           </div>
           <div className="flex justify-between text-xs mt-1 text-indigo-100">
-            <span>{paidInstallments} de {debt.payments.length} cuotas pagadas</span>
+            <span>{paidInstallments} de {totalInstallments} cuotas pagadas</span>
             <span>{pendingInstallments} restantes</span>
           </div>
         </div>
@@ -120,40 +185,35 @@ function DebtDetail({ debts, onMarkAsPaid }) {
 
       {/* Resumen financiero */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Monto Principal */}
         <div className="bg-white rounded-lg shadow-md p-5 border-l-4 border-blue-500">
           <p className="text-sm text-gray-500 mb-1">💰 Monto Principal</p>
-          <p className="text-2xl font-bold text-gray-800">S/ {debt.principal?.toFixed(2) || '0.00'}</p>
+          <p className="text-2xl font-bold text-gray-800">S/ {principal.toFixed(2)}</p>
           <p className="text-xs text-gray-500 mt-1">Sin intereses</p>
         </div>
 
-        {/* Intereses Totales */}
         <div className="bg-white rounded-lg shadow-md p-5 border-l-4 border-orange-500">
           <p className="text-sm text-gray-500 mb-1">📈 Intereses Totales</p>
-          <p className="text-2xl font-bold text-orange-600">S/ {debt.totalInterest?.toFixed(2) || '0.00'}</p>
+          <p className="text-2xl font-bold text-orange-600">S/ {totalInterest.toFixed(2)}</p>
           <p className="text-xs text-gray-500 mt-1">
-            {debt.interestRate}% {getInterestTypeLabel(debt.interestPeriod)}
+            {interestRate > 0 ? `${interestRate}% ${getInterestTypeLabel(interestPeriod)}` : 'Sin interés'}
           </p>
         </div>
 
-        {/* Monto Total */}
         <div className="bg-white rounded-lg shadow-md p-5 border-l-4 border-indigo-500">
           <p className="text-sm text-gray-500 mb-1">💳 Monto Total a Pagar</p>
-          <p className="text-2xl font-bold text-indigo-600">S/ {debt.totalAmount?.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-indigo-600">S/ {debt.totalAmount.toFixed(2)}</p>
           <p className="text-xs text-gray-500 mt-1">Principal + Intereses</p>
         </div>
 
-        {/* Cuota Mensual */}
         <div className="bg-white rounded-lg shadow-md p-5 border-l-4 border-purple-500">
           <p className="text-sm text-gray-500 mb-1">📅 Cuota Mensual</p>
-          <p className="text-2xl font-bold text-purple-600">S/ {debt.cuota?.toFixed(2)}</p>
-          <p className="text-xs text-gray-500 mt-1">{debt.installments} cuotas</p>
+          <p className="text-2xl font-bold text-purple-600">S/ {debt.cuota.toFixed(2)}</p>
+          <p className="text-xs text-gray-500 mt-1">{totalInstallments} cuotas</p>
         </div>
       </div>
 
       {/* Estado de pagos */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Pagado hasta ahora */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
             <span className="text-green-500">✅</span> Pagado Hasta Ahora
@@ -174,7 +234,6 @@ function DebtDetail({ debts, onMarkAsPaid }) {
           </div>
         </div>
 
-        {/* Pendiente por pagar */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
             <span className="text-yellow-500">⏳</span> Pendiente por Pagar
@@ -196,7 +255,7 @@ function DebtDetail({ debts, onMarkAsPaid }) {
         </div>
       </div>
 
-      {/* Historial de pagos detallado */}
+      {/* Historial de pagos */}
       <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <span>📋</span> Historial de Pagos Detallado
@@ -218,7 +277,10 @@ function DebtDetail({ debts, onMarkAsPaid }) {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {debt.payments && debt.payments.length > 0 ? (
-                debt.payments.map((payment, idx) => {
+                // Filtrar solo los pagos que coinciden con la cuota actual de la deuda
+                debt.payments
+                  .filter(p => Math.abs(p.amount - debt.cuota) < 0.01) // Mostrar solo los que coinciden con cuota actual
+                  .map((payment, idx) => {
                   const dueDate = new Date(payment.date + 'T00:00:00');
                   const dueDateStr = dueDate.toLocaleDateString('es-PE', { 
                     day: '2-digit', 
@@ -234,11 +296,9 @@ function DebtDetail({ debts, onMarkAsPaid }) {
                       })
                     : '-';
 
-                  // Calcular capital e interés aproximados por cuota
-                  const capitalPorCuota = debt.principal / debt.installments;
-                  const interesPorCuota = debt.totalInterest / debt.installments;
+                  const capitalPorCuota = totalInstallments > 0 ? principal / totalInstallments : 0;
+                  const interesPorCuota = totalInstallments > 0 ? totalInterest / totalInstallments : 0;
 
-                  // Verificar si está vencido
                   const today = new Date();
                   today.setHours(0, 0, 0, 0);
                   const isOverdue = !payment.paid && dueDate < today;
@@ -316,7 +376,6 @@ function DebtDetail({ debts, onMarkAsPaid }) {
           </table>
         </div>
 
-        {/* Leyenda */}
         <div className="mt-4 p-4 bg-gray-50 rounded-lg">
           <p className="text-xs text-gray-600 font-semibold mb-2">📌 Información de la tabla:</p>
           <ul className="text-xs text-gray-600 space-y-1">
@@ -326,6 +385,16 @@ function DebtDetail({ debts, onMarkAsPaid }) {
           </ul>
         </div>
       </div>
+
+      {/* Modal de edición - key es importante para forzar re-render */}
+      <AddDebtModal
+        key={refreshTrigger}
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        onAddDebt={handleEdit}
+        initialData={debt}
+        isEditing={true}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 
-function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
+function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
   const [formData, setFormData] = useState({
     name: "",
     lender: "",
@@ -17,25 +17,35 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
     totalInterest: 0,
   });
 
-  // ✅ Cargar datos si se está modificando una deuda
-  useEffect(() => {
-    if (editingDebt) {
-      setFormData({
-        name: editingDebt.name || "",
-        lender: editingDebt.lender || "",
-        principal: editingDebt.principal?.toString() || "",
-        interestRate: editingDebt.interestRate?.toString() || "",
-        interestPeriod: editingDebt.interestPeriod || "monthly",
-        installments: editingDebt.installments?.toString() || "",
-        startDate: editingDebt.startDate || "",
-      });
+  const [error, setError] = useState("");
 
+  // ✅ PRECARGA DATOS AL ABRIR EN MODO EDICIÓN - SOLO UNA VEZ
+  useEffect(() => {
+    if (isEditing && initialData) {
+      console.log("📝 Precargando datos para edición:", initialData);
+      
+      const newFormData = {
+        name: initialData.name || "",
+        lender: initialData.lender || "",
+        principal: (initialData.principal || "").toString(),
+        interestRate: (initialData.interestRate || "").toString(),
+        interestPeriod: initialData.interestPeriod || "monthly",
+        installments: (initialData.installments || "").toString(),
+        startDate: initialData.startDate || "",
+      };
+      
+      setFormData(newFormData);
       setCalculatedData({
-        totalAmount: editingDebt.totalAmount || 0,
-        cuota: editingDebt.cuota || 0,
-        totalInterest: editingDebt.totalInterest || 0,
+        totalAmount: initialData.totalAmount || 0,
+        cuota: initialData.cuota || 0,
+        totalInterest: initialData.totalInterest || 0,
       });
-    } else {
+    }
+  }, [isEditing, initialData?.id]);
+
+  // ✅ NUEVA DEUDA - LIMPIAR
+  useEffect(() => {
+    if (isOpen && !isEditing) {
       setFormData({
         name: "",
         lender: "",
@@ -46,59 +56,46 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
         startDate: "",
       });
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
+      setError("");
     }
-  }, [editingDebt, isOpen]);
+  }, [isOpen, isEditing]);
 
-  // ✅ Calcular automáticamente según el tipo de interés
+  // ✅ CALCULAR cuando cambien los valores
   useEffect(() => {
-    const { principal, interestRate, installments, interestPeriod } = formData;
+    const principal = parseFloat(formData.principal || 0);
+    const interestRate = parseFloat(formData.interestRate || 0);
+    const installments = parseInt(formData.installments || 0);
 
-    if (principal && interestRate && installments) {
-      const P = parseFloat(principal);
-      const rate = parseFloat(interestRate);
-      const n = parseInt(installments);
+    if (principal > 0 && installments > 0) {
+      let totalAmount, cuota, totalInterest;
 
-      if (P > 0 && rate >= 0 && n > 0) {
-        let totalAmount, cuota, totalInterest;
-
-        switch (interestPeriod) {
+      if (interestRate === 0) {
+        cuota = principal / installments;
+        totalAmount = principal;
+        totalInterest = 0;
+      } else {
+        switch (formData.interestPeriod) {
           case "unique":
-            totalInterest = (P * rate) / 100;
-            totalAmount = P + totalInterest;
-            cuota = totalAmount / n;
+            totalInterest = (principal * interestRate) / 100;
+            totalAmount = principal + totalInterest;
+            cuota = totalAmount / installments;
             break;
 
           case "monthly":
-            const r_monthly = rate / 100;
-            if (r_monthly === 0) {
-              cuota = P / n;
-              totalAmount = P;
-              totalInterest = 0;
-            } else {
-              cuota =
-                (P * (r_monthly * Math.pow(1 + r_monthly, n))) /
-                (Math.pow(1 + r_monthly, n) - 1);
-              totalAmount = cuota * n;
-              totalInterest = totalAmount - P;
-            }
+            const r_monthly = interestRate / 100;
+            const pow = Math.pow(1 + r_monthly, installments);
+            cuota = (principal * (r_monthly * pow)) / (pow - 1);
+            totalAmount = cuota * installments;
+            totalInterest = totalAmount - principal;
             break;
 
           case "annual":
-            const r_annual = rate / 100;
+            const r_annual = interestRate / 100;
             const r_monthly_from_annual = Math.pow(1 + r_annual, 1 / 12) - 1;
-            if (r_monthly_from_annual === 0) {
-              cuota = P / n;
-              totalAmount = P;
-              totalInterest = 0;
-            } else {
-              cuota =
-                (P *
-                  (r_monthly_from_annual *
-                    Math.pow(1 + r_monthly_from_annual, n))) /
-                (Math.pow(1 + r_monthly_from_annual, n) - 1);
-              totalAmount = cuota * n;
-              totalInterest = totalAmount - P;
-            }
+            const pow2 = Math.pow(1 + r_monthly_from_annual, installments);
+            cuota = (principal * (r_monthly_from_annual * pow2)) / (pow2 - 1);
+            totalAmount = cuota * installments;
+            totalInterest = totalAmount - principal;
             break;
 
           default:
@@ -106,15 +103,15 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
             cuota = 0;
             totalInterest = 0;
         }
-
-        setCalculatedData({
-          totalAmount: totalAmount || 0,
-          cuota: cuota || 0,
-          totalInterest: totalInterest || 0,
-        });
-      } else {
-        setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
       }
+
+      console.log("📊 Calculado:", { cuota, totalAmount, totalInterest });
+
+      setCalculatedData({
+        totalAmount: isNaN(totalAmount) ? 0 : totalAmount,
+        cuota: isNaN(cuota) ? 0 : cuota,
+        totalInterest: isNaN(totalInterest) ? 0 : totalInterest,
+      });
     } else {
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
     }
@@ -127,65 +124,75 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setError("");
 
+    // Validar campos requeridos
     if (
       !formData.name ||
       !formData.lender ||
       !formData.principal ||
-      !formData.interestRate ||
       !formData.installments ||
       !formData.startDate
     ) {
-      alert("Por favor completa todos los campos");
+      setError("Por favor completa todos los campos requeridos");
+      return;
+    }
+
+    const principal = parseFloat(formData.principal);
+    const installments = parseInt(formData.installments);
+    const interestRate = parseFloat(formData.interestRate || 0);
+
+    // ✅ Validación de NO negativos
+    if (principal <= 0) {
+      setError("El monto principal debe ser mayor a 0");
+      return;
+    }
+
+    if (installments <= 0) {
+      setError("El número de cuotas debe ser mayor a 0");
+      return;
+    }
+
+    if (interestRate < 0) {
+      setError("La tasa de interés no puede ser negativa");
       return;
     }
 
     const debtData = {
-      name: formData.name,
-      lender: formData.lender,
-      totalAmount: calculatedData.totalAmount,
-      cuota: calculatedData.cuota,
-      installments: parseInt(formData.installments),
+      name: formData.name.trim(),
+      lender: formData.lender.trim(),
+      totalAmount: Math.round(calculatedData.totalAmount * 100) / 100,
+      cuota: Math.round(calculatedData.cuota * 100) / 100,
+      installments: installments,
       startDate: formData.startDate,
-      principal: parseFloat(formData.principal),
-      interestRate: parseFloat(formData.interestRate),
+      principal: principal,
+      interestRate: interestRate,
       interestPeriod: formData.interestPeriod,
-      totalInterest: calculatedData.totalInterest,
+      totalInterest: Math.round(calculatedData.totalInterest * 100) / 100,
     };
 
-    if (editingDebt?.id) {
-      onAddDebt({ ...debtData, id: editingDebt.id, isEdit: true });
-    } else {
-      onAddDebt(debtData);
+    console.log("💾 Guardando deuda con datos finales:", debtData);
+
+    onAddDebt(debtData);
+
+    if (!isEditing) {
+      setFormData({
+        name: "",
+        lender: "",
+        principal: "",
+        interestRate: "",
+        interestPeriod: "monthly",
+        installments: "",
+        startDate: "",
+      });
+      setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
     }
 
-    setFormData({
-      name: "",
-      lender: "",
-      principal: "",
-      interestRate: "",
-      interestPeriod: "monthly",
-      installments: "",
-      startDate: "",
-    });
-    setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
+    setError("");
     onClose();
   };
 
   if (!isOpen) return null;
-
-  const getInterestTypeDescription = () => {
-    switch (formData.interestPeriod) {
-      case "unique":
-        return "💡 Se cobra una sola vez al inicio (Ej: Yape BCP)";
-      case "monthly":
-        return "💡 Se aplica cada mes sobre el saldo (Ej: Tarjetas de crédito)";
-      case "annual":
-        return "💡 TEA convertida a mensual (Ej: Préstamos bancarios)";
-      default:
-        return "";
-    }
-  };
 
   return (
     <div
@@ -197,11 +204,16 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-2xl font-bold text-gray-800 mb-6">
-          {editingDebt ? "Editar Deuda" : "Nueva Deuda"}
+          {isEditing ? "✏️ Editar Deuda" : "➕ Nueva Deuda"}
         </h3>
+
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+            {error}
+          </div>
+        )}
         
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Información básica */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -232,7 +244,6 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
             </div>
           </div>
 
-          {/* Datos financieros */}
           <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
             <h4 className="font-semibold text-blue-900 mb-3">💰 Datos Financieros</h4>
             
@@ -244,21 +255,23 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
                 <input
                   type="number"
                   step="0.01"
-                  min="0"
+                  min="0.01"
                   placeholder="300.00"
                   value={formData.principal}
                   onChange={(e) => {
                     const value = e.target.value;
-                    if (value === '' || parseFloat(value) >= 0) {
+                    // ✅ Solo permitir números positivos o vacío
+                    if (value === "" || parseFloat(value) >= 0) {
                       setFormData({ ...formData, principal: value });
                     }
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === '-' || e.key === 'e' || e.key === 'E') {
+                    // ✅ Bloquear tecla de signo negativo
+                    if (e.key === "-" || e.key === "e" || e.key === "E") {
                       e.preventDefault();
                     }
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   required
                 />
               </div>
@@ -274,22 +287,23 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
                   value={formData.installments}
                   onChange={(e) => {
                     const value = e.target.value;
-                    if (value === '' || parseInt(value) >= 1) {
+                    // ✅ Solo permitir números enteros positivos o vacío
+                    if (value === "" || (parseInt(value) >= 1 && !value.includes("."))) {
                       setFormData({ ...formData, installments: value });
                     }
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === '-' || e.key === '.' || e.key === ',' || e.key === 'e' || e.key === 'E') {
+                    // ✅ Bloquear signos negativos y decimales
+                    if (e.key === "-" || e.key === "." || e.key === "," || e.key === "e" || e.key === "E") {
                       e.preventDefault();
                     }
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   required
                 />
               </div>
             </div>
 
-            {/* Tipo de interés */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Tipo de interés *
@@ -303,44 +317,38 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
                 <option value="monthly">Interés mensual (Ej: Tarjeta de crédito)</option>
                 <option value="annual">Interés anual - TEA (Ej: Préstamo bancario)</option>
               </select>
-              <p className="text-xs text-blue-600 mt-1">{getInterestTypeDescription()}</p>
             </div>
 
-            {/* Tasa de interés */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tasa de interés (%) *
+                Tasa de interés (%)
               </label>
               <input
                 type="number"
                 step="0.01"
                 min="0"
                 max="100"
-                placeholder={formData.interestPeriod === 'annual' ? '12.5' : '9.8'}
+                placeholder="9.8"
                 value={formData.interestRate}
                 onChange={(e) => {
                   const value = e.target.value;
-                  if (value === '' || (parseFloat(value) >= 0 && parseFloat(value) <= 100)) {
+                  // ✅ Solo permitir 0-100 o vacío
+                  if (value === "" || (parseFloat(value) >= 0 && parseFloat(value) <= 100)) {
                     setFormData({ ...formData, interestRate: value });
                   }
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === '-' || e.key === 'e' || e.key === 'E') {
+                  // ✅ Bloquear signo negativo
+                  if (e.key === "-" || e.key === "e" || e.key === "E") {
                     e.preventDefault();
                   }
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                {formData.interestPeriod === 'unique' && 'Porcentaje que se cobrará una sola vez'}
-                {formData.interestPeriod === 'monthly' && 'Tasa mensual (TEM)'}
-                {formData.interestPeriod === 'annual' && 'Tasa efectiva anual (TEA)'}
-              </p>
+              <p className="text-xs text-gray-500 mt-1">💡 Deja en 0 si no tiene intereses</p>
             </div>
           </div>
 
-          {/* Fecha de inicio */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Fecha de primer pago *
@@ -354,7 +362,6 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
             />
           </div>
 
-          {/* Resumen calculado */}
           {calculatedData.totalAmount > 0 && (
             <div className="bg-green-50 p-4 rounded-lg border border-green-200">
               <h4 className="font-semibold text-green-900 mb-3">📊 Resumen Calculado</h4>
@@ -370,9 +377,6 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
                   <p className="text-xl font-bold text-orange-600">
                     S/ {calculatedData.totalInterest.toFixed(2)}
                   </p>
-                  <p className="text-xs text-gray-500">
-                    ({((calculatedData.totalInterest / parseFloat(formData.principal || 1)) * 100).toFixed(2)}% del principal)
-                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Total a pagar</p>
@@ -381,19 +385,9 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
                   </p>
                 </div>
               </div>
-              <div className="mt-3 p-2 bg-white rounded border border-green-300">
-                <p className="text-xs text-gray-700">
-                  <strong>Ejemplo:</strong> Si pides S/ {formData.principal || '300'} con {formData.interestRate || '9.8'}% de interés 
-                  {formData.interestPeriod === 'unique' && ' único'}
-                  {formData.interestPeriod === 'monthly' && ' mensual'}
-                  {formData.interestPeriod === 'annual' && ' anual'}
-                  , pagarás {formData.installments || '6'} cuotas de S/ {calculatedData.cuota.toFixed(2)}
-                </p>
-              </div>
             </div>
           )}
 
-          {/* Botones */}
           <div className="flex gap-3 mt-6 pt-4 border-t">
             <button
               type="button"
@@ -406,7 +400,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, editingDebt }) {
               type="submit"
               className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-semibold transition"
             >
-              {editingDebt ? "Actualizar Deuda" : "Guardar Deuda"}
+              {isEditing ? "✏️ Actualizar Deuda" : "➕ Guardar Deuda"}
             </button>
           </div>
         </form>

@@ -4,21 +4,16 @@ import MonthNavigator from "../components/dashboard/MonthNavigator.jsx";
 import SummaryCards from "../components/dashboard/SummaryCards.jsx";
 import AddDebtModal from "../components/dashboard/AddDebtModal.jsx";
 
-function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
+function Dashboard({ debts = [], onAddDebt, onUpdateDebt, handleLogout, onMarkAsPaid }) {
   const [activeView, setActiveView] = useState("Este Mes");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingDebt, setEditingDebt] = useState(null);
   const [isUpcomingModalOpen, setIsUpcomingModalOpen] = useState(false);
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
   const [urgentPayments, setUrgentPayments] = useState([]);
   const [showPaidDebts, setShowPaidDebts] = useState(false);
-  const [localDebts, setLocalDebts] = useState(debts);
-  const [confirmationMessage, setConfirmationMessage] = useState("");
 
   const navigate = useNavigate();
-
-  useEffect(() => {
-    setLocalDebts(debts);
-  }, [debts]);
 
   const getDaysUntilDue = (paymentDate) => {
     const today = new Date();
@@ -26,36 +21,73 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
     const dueDate = new Date(paymentDate + "T00:00:00");
     dueDate.setHours(0, 0, 0, 0);
     const diffTime = dueDate - today;
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
+  // 🔥 FUNCIÓN PARA FILTRAR SOLO PAGOS VÁLIDOS (igual que en DebtDetail)
+  const getValidPayments = (debt) => {
+    if (!debt.payments || debt.payments.length === 0) return [];
+    
+    // Filtrar pagos que coincidan con la cuota actual (tolerancia de 0.01)
+    return debt.payments.filter(p => 
+      Math.abs(p.amount - debt.cuota) < 0.01
+    );
   };
 
   useEffect(() => {
-    const urgent = [];
-    localDebts.forEach((debt) => {
-      const nextPayment = debt.payments?.find((p) => !p.paid);
-      if (nextPayment) {
-        const daysUntilDue = getDaysUntilDue(nextPayment.date);
-        if (daysUntilDue <= 5 && daysUntilDue >= 0) {
-          urgent.push({ ...nextPayment, debtName: debt.name, debtId: debt.id });
+    const checkUrgentPayments = async () => {
+      const urgent = [];
+
+      debts.forEach((debt) => {
+        // 🔥 Usar pagos válidos
+        const validPayments = getValidPayments(debt);
+        const nextPayment = validPayments.find((p) => !p.paid);
+        
+        if (nextPayment) {
+          const daysUntilDue = getDaysUntilDue(nextPayment.date);
+          if (daysUntilDue <= 5 && daysUntilDue >= 0) {
+            urgent.push({
+              debtId: debt.id,
+              debtName: debt.name,
+              lender: debt.lender,
+              amount: nextPayment.amount,
+              dueDate: nextPayment.date,
+              daysLeft: daysUntilDue,
+              paymentId: nextPayment.id,
+            });
+          }
+        }
+      });
+
+      if (urgent.length > 0) {
+        setUrgentPayments(urgent);
+
+        const lastShown = localStorage.getItem("lastWarningShown");
+        const today = new Date().toDateString();
+
+        if (lastShown !== today) {
+          setIsWarningModalOpen(true);
+          localStorage.setItem("lastWarningShown", today);
         }
       }
-    });
-    if (urgent.length > 0) {
-      setUrgentPayments(urgent);
-      const lastShown = localStorage.getItem("lastWarningShown");
-      const today = new Date().toDateString();
-      if (lastShown !== today) {
-        setIsWarningModalOpen(true);
-        localStorage.setItem("lastWarningShown", today);
-      }
+    };
+
+    if (debts.length > 0) {
+      checkUrgentPayments();
     }
-  }, [localDebts]);
+  }, [debts]);
 
   const summaryData = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
     const monthOffset = activeView === "Este Mes" ? 0 : 1;
-    const targetDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+    const targetDate = new Date(
+      today.getFullYear(),
+      today.getMonth() + monthOffset,
+      1
+    );
     const targetYear = targetDate.getFullYear();
     const targetMonth = targetDate.getMonth();
 
@@ -65,19 +97,31 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
     const in10Days = new Date(today);
     in10Days.setDate(today.getDate() + 10);
 
-    localDebts.forEach((debt) => {
-      debt.payments?.forEach((p) => {
+    debts.forEach((debt) => {
+      // 🔥 Usar solo pagos válidos
+      const validPayments = getValidPayments(debt);
+      
+      validPayments.forEach((p) => {
         if (p.paid) return;
+
         const paymentDate = new Date(p.date + "T00:00:00");
         paymentDate.setHours(0, 0, 0, 0);
 
-        if (paymentDate.getFullYear() === targetYear && paymentDate.getMonth() === targetMonth) {
+        if (
+          paymentDate.getFullYear() === targetYear &&
+          paymentDate.getMonth() === targetMonth
+        ) {
+          // ✅ Usar el monto del pago válido
           totalToPayInView += p.amount;
           pendingInstallmentsInView++;
         }
 
         if (paymentDate >= today && paymentDate <= in10Days) {
-          upcomingList.push({ ...debt, nextPaymentDate: paymentDate, paymentId: p.id });
+          upcomingList.push({
+            ...debt,
+            nextPaymentDate: paymentDate,
+            paymentId: p.id,
+          });
         }
       });
     });
@@ -88,38 +132,32 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
       upcomingPaymentsCount: upcomingList.length,
       upcomingList,
     };
-  }, [localDebts, activeView]);
+  }, [debts, activeView]);
 
   const handleRowClick = (debtId) => navigate(`/deudas/${debtId}`);
   const handleUpcomingClick = () => setIsUpcomingModalOpen(true);
+  const handleMarkAsPaidClick = (debtId, paymentId) => onMarkAsPaid(debtId, paymentId);
 
-  const handleMarkAsPaidClick = (debtId, paymentId) => {
-    onMarkAsPaid(debtId, paymentId); // Actualiza backend
-    // Actualizar estado local para reflejar cambios inmediato
-    setLocalDebts((prev) =>
-      prev.map((d) =>
-        d.id === debtId
-          ? {
-              ...d,
-              payments: d.payments.map((p) =>
-                p.id === paymentId ? { ...p, paid: true, paidAt: new Date().toISOString() } : p
-              ),
-            }
-          : d
-      )
-    );
-    showConfirmation("Pago marcado como realizado ✅");
+  const handleOpenNewDebt = () => {
+    setEditingDebt(null);
+    setIsAddModalOpen(true);
   };
 
-  const handleAddDebt = (debt) => {
-    onAddDebt(debt);
-    setLocalDebts([...localDebts, { ...debt, id: Date.now().toString(), payments: [] }]);
-    showConfirmation("Nueva deuda agregada ✅");
+  const handleEditDebt = (debt) => {
+    setEditingDebt(debt);
+    setIsAddModalOpen(true);
   };
 
-  const showConfirmation = (message) => {
-    setConfirmationMessage(message);
-    setTimeout(() => setConfirmationMessage(""), 3000);
+  const handleSaveDebt = async (debtData) => {
+    if (editingDebt) {
+      // 🔁 Modo edición - pasamos el ID y los datos
+      await onUpdateDebt(editingDebt.id, debtData);
+    } else {
+      // ➕ Modo nuevo
+      await onAddDebt(debtData);
+    }
+    setEditingDebt(null);
+    setIsAddModalOpen(false);
   };
 
   return (
@@ -145,7 +183,7 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
             </button>
             {!showPaidDebts && (
               <button
-                onClick={() => setIsAddModalOpen(true)}
+                onClick={handleOpenNewDebt}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-semibold"
               >
                 + Nueva Deuda
@@ -154,7 +192,7 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
           </div>
         </div>
 
-        {/* Tabla de deudas */}
+        {/* Tabla */}
         <div className="overflow-x-auto rounded-lg shadow">
           <table className="w-full bg-white">
             <thead className="bg-gray-100 text-gray-700">
@@ -165,51 +203,58 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
                 <th className="py-3 px-4 text-center">Próximo Pago</th>
                 <th className="py-3 px-4 text-center">Días restantes</th>
                 <th className="py-3 px-4 text-center">Estado</th>
+                <th className="py-3 px-4 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {localDebts
+              {debts
                 .filter((debt) => {
-                  const allPaid = debt.payments?.every((p) => p.paid);
+                  // 🔥 Usar pagos válidos para determinar si está pagada
+                  const validPayments = getValidPayments(debt);
+                  const allPaid = validPayments.length > 0 && validPayments.every((p) => p.paid);
                   return showPaidDebts ? allPaid : !allPaid;
                 })
                 .map((debt) => {
-                  const nextPaymentObj = debt.payments?.find((p) => !p.paid);
+                  // 🔥 Usar pagos válidos
+                  const validPayments = getValidPayments(debt);
+                  const nextPaymentObj = validPayments.find((p) => !p.paid);
+                  
                   const nextPaymentStr = nextPaymentObj?.date
                     ? new Date(nextPaymentObj.date + "T00:00:00").toLocaleDateString("es-PE")
                     : "-";
+                  
+                  // ✅ Usar el monto del próximo pago válido, o la cuota de la deuda
                   const cuotaAmount = nextPaymentObj?.amount || debt.cuota || 0;
-                  const daysUntilDue = nextPaymentObj?.date ? getDaysUntilDue(nextPaymentObj.date) : null;
+
+                  const daysUntilDue = nextPaymentObj?.date
+                    ? getDaysUntilDue(nextPaymentObj.date)
+                    : null;
+
                   const isUrgent = daysUntilDue !== null && daysUntilDue <= 5 && daysUntilDue >= 0;
                   const isOverdue = daysUntilDue !== null && daysUntilDue < 0;
 
                   return (
                     <tr
                       key={debt.id}
-                      className={`border-t cursor-pointer transition ${
+                      className={`border-t transition ${
                         isOverdue
-                          ? "bg-red-600 hover:bg-red-700 text-white"
+                          ? "bg-red-600 text-white"
                           : isUrgent
-                          ? "bg-red-100 hover:bg-red-200 border-l-4 border-red-500"
+                          ? "bg-red-100 border-l-4 border-red-500"
                           : "hover:bg-gray-50"
                       }`}
-                      onClick={() => handleRowClick(debt.id)}
                     >
-                      <td className={`py-3 px-4 font-semibold ${isUrgent || isOverdue ? "text-red-900" : ""}`}>
+                      <td className="py-3 px-4 font-semibold">
                         {debt.name}
                         {isUrgent && <span className="ml-2 text-red-600 animate-pulse">⚠️</span>}
-                        {isOverdue && <span className="ml-2 text-white animate-pulse">🚨</span>}
+                        {isOverdue && <span className="ml-2 animate-pulse">🚨</span>}
                       </td>
-                      <td className={`py-3 px-4 ${isOverdue ? "text-white" : ""}`}>{debt.lender}</td>
-                      <td className={`py-3 px-4 text-center font-semibold ${isOverdue ? "text-white" : ""}`}>
+                      <td className="py-3 px-4">{debt.lender}</td>
+                      <td className="py-3 px-4 text-center font-semibold">
                         S/ {cuotaAmount.toFixed(2)}
                       </td>
-                      <td className={`py-3 px-4 text-center ${isOverdue ? "text-white" : ""}`}>{nextPaymentStr}</td>
-                      <td
-                        className={`py-3 px-4 text-center font-bold ${
-                          isOverdue ? "text-white" : isUrgent ? "text-red-600" : daysUntilDue !== null && daysUntilDue <= 10 ? "text-yellow-600" : "text-gray-600"
-                        }`}
-                      >
+                      <td className="py-3 px-4 text-center">{nextPaymentStr}</td>
+                      <td className="py-3 px-4 text-center font-bold">
                         {daysUntilDue !== null
                           ? isOverdue
                             ? `${Math.abs(daysUntilDue)} día(s) VENCIDO`
@@ -219,11 +264,26 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
                       <td className="py-3 px-4 text-center">
                         <span
                           className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                            isOverdue ? "bg-white text-red-600" : debt.status === "PENDIENTE" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"
+                            isOverdue
+                              ? "bg-white text-red-600"
+                              : debt.status === "PENDIENTE"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : "bg-green-100 text-green-700"
                           }`}
                         >
                           {isOverdue ? "VENCIDO" : debt.status}
                         </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditDebt(debt);
+                          }}
+                          className="text-indigo-600 hover:text-indigo-800 font-semibold"
+                        >
+                          ✏️ Modificar
+                        </button>
                       </td>
                     </tr>
                   );
@@ -233,18 +293,17 @@ function Dashboard({ debts = [], onAddDebt, handleLogout, onMarkAsPaid }) {
         </div>
       </section>
 
+      {/* Modal */}
       <AddDebtModal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        onAddDebt={handleAddDebt}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setEditingDebt(null);
+        }}
+        onAddDebt={handleSaveDebt}
+        initialData={editingDebt}
+        isEditing={!!editingDebt}
       />
-
-      {/* Mensaje de confirmación */}
-      {confirmationMessage && (
-        <div className="fixed bottom-6 right-6 bg-green-500 text-white px-4 py-2 rounded shadow-lg animate-fade">
-          {confirmationMessage}
-        </div>
-      )}
     </div>
   );
 }
