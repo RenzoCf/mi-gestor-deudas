@@ -1,4 +1,4 @@
-// src/services/debtService.js
+// src/services/debtServices.js
 import { supabase } from '../supabaseClient';
 
 // ✅ Función auxiliar para sumar meses correctamente
@@ -61,6 +61,7 @@ export const getUserDebts = async () => {
           principal: parseFloat(debt.principal),
           interestRate: parseFloat(debt.interest_rate),
           totalInterest: parseFloat(debt.total_interest),
+          interestPeriod: debt.interest_period,
           payments: payments.map(p => ({
             id: p.id,
             date: p.date,
@@ -100,6 +101,7 @@ export const createDebt = async (debtData) => {
         status: 'PENDIENTE',
         principal: debtData.principal,
         interest_rate: debtData.interestRate,
+        interest_period: debtData.interestPeriod,
         total_interest: debtData.totalInterest,
       }])
       .select()
@@ -204,12 +206,11 @@ export const deleteDebt = async (debtId) => {
   }
 };
 
-// ✅ ACTUALIZAR DEUDA CON RECÁLCULO DE CUOTAS (CORREGIDO)
+// 🔥 ACTUALIZAR DEUDA CON RECÁLCULO DE CUOTAS (CORREGIDO - ELIMINA TODO)
 export const updateDebtWithPayments = async (debtId, updates) => {
   try {
     console.log('📝 Iniciando actualización:', { debtId, updates });
 
-    // Convertir a números correctamente
     const cuotaNumerica = parseFloat(updates.cuota);
     const installmentsNumerica = parseInt(updates.installments);
     const totalAmountNumerica = parseFloat(updates.totalAmount);
@@ -232,6 +233,7 @@ export const updateDebtWithPayments = async (debtId, updates) => {
         start_date: updates.startDate,
         principal: parseFloat(updates.principal || updates.totalAmount),
         interest_rate: parseFloat(updates.interestRate || 0),
+        interest_period: updates.interestPeriod || 'unique',
         total_interest: parseFloat(updates.totalInterest || 0),
         updated_at: new Date().toISOString()
       })
@@ -242,28 +244,22 @@ export const updateDebtWithPayments = async (debtId, updates) => {
     if (debtError) throw debtError;
     console.log('✅ Deuda actualizada en BD');
 
-    // 2. ELIMINAR pagos antiguos - PRIMERO obtener IDs
-    const { data: oldPayments, error: fetchError } = await supabase
+    // 🔥 2. ELIMINAR **TODOS** LOS PAGOS ANTIGUOS (sin importar si están pagados o no)
+    console.log('🗑️ Eliminando TODOS los pagos antiguos...');
+    
+    const { error: deleteError } = await supabase
       .from('payments')
-      .select('id')
+      .delete()
       .eq('debt_id', debtId);
 
-    if (fetchError) throw fetchError;
-    console.log('📋 Pagos a eliminar:', oldPayments?.length || 0);
-
-    if (oldPayments && oldPayments.length > 0) {
-      const paymentIds = oldPayments.map(p => p.id);
-      
-      const { error: deleteError } = await supabase
-        .from('payments')
-        .delete()
-        .in('id', paymentIds);
-
-      if (deleteError) throw deleteError;
-      console.log('🗑️ Pagos eliminados:', paymentIds.length);
+    if (deleteError) {
+      console.error('❌ Error eliminando pagos:', deleteError);
+      throw deleteError;
     }
+    
+    console.log('✅ Todos los pagos antiguos eliminados');
 
-    // 3. CREAR nuevos pagos con cuota uniforme y fechas correctas
+    // 3. CREAR nuevos pagos desde cero
     const newPayments = [];
     for (let idx = 0; idx < installmentsNumerica; idx++) {
       const date = addMonths(new Date(updates.startDate + 'T00:00:00'), idx);
@@ -276,14 +272,18 @@ export const updateDebtWithPayments = async (debtId, updates) => {
       });
     }
 
-    console.log('📋 Nuevos pagos a crear:', newPayments);
+    console.log('📋 Nuevos pagos a crear:', newPayments.length);
 
     const { data: createdPayments, error: paymentsError } = await supabase
       .from('payments')
       .insert(newPayments)
       .select();
 
-    if (paymentsError) throw paymentsError;
+    if (paymentsError) {
+      console.error('❌ Error creando nuevos pagos:', paymentsError);
+      throw paymentsError;
+    }
+    
     console.log('✅ Nuevos pagos generados:', createdPayments.length);
 
     return { 

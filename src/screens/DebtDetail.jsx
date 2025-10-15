@@ -33,18 +33,23 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
     );
   }
 
-  // Cálculos detallados
-  const totalPaid = debt.payments
-    ?.filter(p => p.paid)
-    .reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
+  // 🔥 FILTRAR SOLO PAGOS VÁLIDOS (que coincidan con la cuota actual)
+  const validPayments = debt.payments?.filter(p => 
+    Math.abs(p.amount - debt.cuota) < 0.01
+  ) || [];
 
-  const totalPending = debt.payments
-    ?.filter(p => !p.paid)
-    .reduce((sum, p) => sum + (p.amount || 0), 0) || 0;
+  // 🔥 Cálculos usando SOLO pagos válidos
+  const totalPaid = validPayments
+    .filter(p => p.paid)
+    .reduce((sum, p) => sum + (p.amount || 0), 0);
 
-  const paidInstallments = debt.payments?.filter(p => p.paid).length || 0;
-  const pendingInstallments = debt.payments?.filter(p => !p.paid).length || 0;
-  const totalInstallments = debt.payments?.length || debt.installments || 0;
+  const totalPending = validPayments
+    .filter(p => !p.paid)
+    .reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  const paidInstallments = validPayments.filter(p => p.paid).length;
+  const pendingInstallments = validPayments.filter(p => !p.paid).length;
+  const totalInstallments = validPayments.length || debt.installments || 0;
   const progressPercentage = totalInstallments > 0 ? (paidInstallments / totalInstallments) * 100 : 0;
 
   // Valores reales
@@ -276,11 +281,8 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {debt.payments && debt.payments.length > 0 ? (
-                // Filtrar solo los pagos que coinciden con la cuota actual de la deuda
-                debt.payments
-                  .filter(p => Math.abs(p.amount - debt.cuota) < 0.01) // Mostrar solo los que coinciden con cuota actual
-                  .map((payment, idx) => {
+              {validPayments.length > 0 ? (
+                validPayments.map((payment, idx) => {
                   const dueDate = new Date(payment.date + 'T00:00:00');
                   const dueDateStr = dueDate.toLocaleDateString('es-PE', { 
                     day: '2-digit', 
