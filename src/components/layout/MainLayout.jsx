@@ -28,19 +28,19 @@ function MainLayout() {
         ></div>
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar - FIJO en desktop, overlay en móvil */}
       <aside
-        className={`fixed z-30 h-full w-64 bg-white shadow-lg flex flex-col transform transition-transform duration-300
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:flex`}
+        className={`fixed md:static z-30 h-full w-64 bg-white shadow-lg flex flex-col transform transition-transform duration-300
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
       >
         {/* Header del Sidebar */}
-        <div className="p-6 border-b border-gray-200 flex items-center justify-between md:block">
+        <div className="p-6 border-b border-gray-200 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-indigo-600">Finanzas Edu</h1>
             <p className="text-sm text-gray-500 mt-1">Gestión de deudas</p>
           </div>
           <button
-            className="md:hidden text-gray-500"
+            className="md:hidden text-gray-500 hover:text-gray-700"
             onClick={() => setSidebarOpen(false)}
           >
             ✖️
@@ -58,7 +58,7 @@ function MainLayout() {
                   <button
                     onClick={() => {
                       navigate(item.path);
-                      setSidebarOpen(false); // cierra sidebar en móvil al navegar
+                      setSidebarOpen(false); // Cierra sidebar en móvil al navegar
                     }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                       isActive
@@ -75,8 +75,8 @@ function MainLayout() {
           </ul>
         </nav>
 
-        {/* Usuario y logout abajo */}
-        <div className="p-4 border-t border-gray-200 mt-auto">
+        {/* Usuario y logout */}
+        <div className="p-4 border-t border-gray-200">
           <div className="flex items-center gap-3 mb-3 px-2">
             <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
               <span className="text-indigo-600 font-bold text-lg">
@@ -100,19 +100,25 @@ function MainLayout() {
         </div>
       </aside>
 
-      {/* Contenido principal */}
-      <main className="flex-1 md:ml-64 overflow-y-auto">
-        {/* Botón para abrir sidebar en móviles */}
-        <div className="md:hidden p-4 bg-gray-100">
+      {/* Contenido principal - CON MARGEN CORRECTO */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header móvil con botón de menú */}
+        <div className="md:hidden bg-white shadow-sm p-4 flex items-center justify-between">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md"
+            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 flex items-center gap-2"
           >
-            ☰ Menú
+            <span>☰</span>
+            <span>Menú</span>
           </button>
+          <h2 className="text-lg font-semibold text-gray-800">Finanzas Edu</h2>
         </div>
-        <Outlet />
-      </main>
+
+        {/* Contenido scrolleable */}
+        <main className="flex-1 overflow-y-auto">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }
