@@ -22,18 +22,21 @@ function Deudas({ debts }) {
           entities.map(entity => {
             const relatedDebts = debts.filter(d => d.lender === entity);
 
-            // Calcular montos
-            const totalAmount = relatedDebts.reduce((a, b) => a + b.totalAmount, 0);
-            const totalPaid = relatedDebts.reduce(
-              (a, b) => a + (b.payments?.filter(p => p.paid).length || 0) * b.cuota,
-              0
-            );
-            const totalPending = totalAmount - totalPaid;
+            // 🔹 Calcular montos reales
+            const totalPrincipal = relatedDebts.reduce((sum, d) => sum + (d.principal || 0), 0);
+            const totalInterest = relatedDebts.reduce((sum, d) => sum + (d.totalInterest || 0), 0);
+            const totalAmount = totalPrincipal + totalInterest;
 
-            // Verificar si todas las deudas están 100% pagadas
-            const allPaid = relatedDebts.every(debt =>
-              debt.payments?.every(p => p.paid)
-            );
+            // 🔹 Calcular total pagado usando solo pagos marcados como "paid"
+            const totalPaid = relatedDebts.reduce((sum, d) => {
+              const validPayments = d.payments?.filter(p => Math.abs(p.amount - d.cuota) < 0.01) || [];
+              const paidSum = validPayments.filter(p => p.paid)
+                .reduce((s, p) => s + (p.amount || 0), 0);
+              return sum + paidSum;
+            }, 0);
+
+            // 🔹 Total pendiente redondeado a 2 decimales para evitar -0.01
+            const totalPending = Math.max(0, totalAmount - totalPaid);
 
             return (
               <div
@@ -66,7 +69,7 @@ function Deudas({ debts }) {
                 </div>
 
                 <div className="mt-4 pt-4 border-t border-gray-200">
-                  {allPaid ? (
+                  {totalPending === 0 ? (
                     <p className="text-sm text-green-600 font-semibold">
                       ✅ Deuda cancelada al 100%
                     </p>
