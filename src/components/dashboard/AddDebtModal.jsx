@@ -19,10 +19,10 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
 
   const [error, setError] = useState("");
 
-  // ✅ PRECARGA DATOS AL ABRIR EN MODO EDICIÓN - SOLO UNA VEZ
+  // PRECARGA DATOS AL ABRIR EN MODO EDICIÓN
   useEffect(() => {
     if (isEditing && initialData) {
-      console.log("📝 Precargando datos para edición:", initialData);
+      console.log("Precargando datos para edición:", initialData);
       
       const newFormData = {
         name: initialData.name || "",
@@ -43,7 +43,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     }
   }, [isEditing, initialData?.id]);
 
-  // ✅ NUEVA DEUDA - LIMPIAR
+  // NUEVA DEUDA - LIMPIAR
   useEffect(() => {
     if (isOpen && !isEditing) {
       setFormData({
@@ -60,7 +60,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     }
   }, [isOpen, isEditing]);
 
-  // ✅ CALCULAR cuando cambien los valores
+  // CALCULAR cuando cambien los valores
   useEffect(() => {
     const principal = parseFloat(formData.principal || 0);
     const interestRate = parseFloat(formData.interestRate || 0);
@@ -90,6 +90,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
             break;
 
           case "annual":
+            // 🔥 CORRECTO: Convertir TEA a TEM
             const r_annual = interestRate / 100;
             const r_monthly_from_annual = Math.pow(1 + r_annual, 1 / 12) - 1;
             const pow2 = Math.pow(1 + r_monthly_from_annual, installments);
@@ -105,7 +106,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
         }
       }
 
-      console.log("📊 Calculado:", { cuota, totalAmount, totalInterest });
+      console.log("Calculado:", { cuota, totalAmount, totalInterest });
 
       setCalculatedData({
         totalAmount: isNaN(totalAmount) ? 0 : totalAmount,
@@ -126,7 +127,6 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     e.preventDefault();
     setError("");
 
-    // Validar campos requeridos
     if (
       !formData.name ||
       !formData.lender ||
@@ -142,7 +142,6 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     const installments = parseInt(formData.installments);
     const interestRate = parseFloat(formData.interestRate || 0);
 
-    // ✅ Validación de NO negativos
     if (principal <= 0) {
       setError("El monto principal debe ser mayor a 0");
       return;
@@ -171,7 +170,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
       totalInterest: Math.round(calculatedData.totalInterest * 100) / 100,
     };
 
-    console.log("💾 Guardando deuda con datos finales:", debtData);
+    console.log("Guardando deuda con datos finales:", debtData);
 
     onAddDebt(debtData);
 
@@ -256,17 +255,15 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                   type="number"
                   step="0.01"
                   min="0.01"
-                  placeholder="300.00"
+                  placeholder="50000.00"
                   value={formData.principal}
                   onChange={(e) => {
                     const value = e.target.value;
-                    // ✅ Solo permitir números positivos o vacío
                     if (value === "" || parseFloat(value) >= 0) {
                       setFormData({ ...formData, principal: value });
                     }
                   }}
                   onKeyDown={(e) => {
-                    // ✅ Bloquear tecla de signo negativo
                     if (e.key === "-" || e.key === "e" || e.key === "E") {
                       e.preventDefault();
                     }
@@ -283,17 +280,15 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                 <input
                   type="number"
                   min="1"
-                  placeholder="6"
+                  placeholder="20"
                   value={formData.installments}
                   onChange={(e) => {
                     const value = e.target.value;
-                    // ✅ Solo permitir números enteros positivos o vacío
                     if (value === "" || (parseInt(value) >= 1 && !value.includes("."))) {
                       setFormData({ ...formData, installments: value });
                     }
                   }}
                   onKeyDown={(e) => {
-                    // ✅ Bloquear signos negativos y decimales
                     if (e.key === "-" || e.key === "." || e.key === "," || e.key === "e" || e.key === "E") {
                       e.preventDefault();
                     }
@@ -328,24 +323,22 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                 step="0.01"
                 min="0"
                 max="100"
-                placeholder="9.8"
+                placeholder="17.02"
                 value={formData.interestRate}
                 onChange={(e) => {
                   const value = e.target.value;
-                  // ✅ Solo permitir 0-100 o vacío
                   if (value === "" || (parseFloat(value) >= 0 && parseFloat(value) <= 100)) {
                     setFormData({ ...formData, interestRate: value });
                   }
                 }}
                 onKeyDown={(e) => {
-                  // ✅ Bloquear signo negativo
                   if (e.key === "-" || e.key === "e" || e.key === "E") {
                     e.preventDefault();
                   }
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
-              <p className="text-xs text-gray-500 mt-1">💡 Deja en 0 si no tiene intereses</p>
+              <p className="text-xs text-gray-500 mt-1">Deja en 0 si no tiene intereses</p>
             </div>
           </div>
 
@@ -364,7 +357,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
 
           {calculatedData.totalAmount > 0 && (
             <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-              <h4 className="font-semibold text-green-900 mb-3">📊 Resumen Calculado</h4>
+              <h4 className="font-semibold text-green-900 mb-3">✅ Resumen Calculado (Sistema Francés)</h4>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">Cuota mensual</p>

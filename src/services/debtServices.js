@@ -1,28 +1,86 @@
-// src/services/debtServices.js
 import { supabase } from '../supabaseClient';
 
-// ✅ Función auxiliar para sumar meses correctamente
+// Función auxiliar mejorada para sumar meses correctamente
 const addMonths = (date, months) => {
   const d = new Date(date);
-  let month = d.getMonth() + months;
-  let year = d.getFullYear();
+  const originalDay = d.getDate();
   
-  while (month > 11) {
-    month -= 12;
-    year += 1;
-  }
-  while (month < 0) {
-    month += 12;
-    year -= 1;
-  }
+  d.setMonth(d.getMonth() + months);
   
-  d.setFullYear(year);
-  d.setMonth(month);
+  // Ajustar si el día resultante no existe en el nuevo mes
+  if (d.getDate() !== originalDay) {
+    d.setDate(0);
+  }
   
   return d;
 };
 
-// ✅ Obtener todas las deudas del usuario con sus pagos
+// 🔥 NUEVA: Función para calcular tabla de amortización (Sistema Francés)
+export const calculateAmortizationSchedule = (principal, annualRate, installments, interestPeriod) => {
+  const schedule = [];
+  
+  // Sin interés o interés único: amortización simple
+  if (annualRate === 0 || interestPeriod === 'unique') {
+    const capitalPorCuota = principal / installments;
+    let interesPorCuota = 0;
+    
+    if (interestPeriod === 'unique' && annualRate > 0) {
+      const totalInterest = (principal * annualRate) / 100;
+      interesPorCuota = totalInterest / installments;
+    }
+    
+    for (let i = 0; i < installments; i++) {
+      schedule.push({
+        cuota: i + 1,
+        capital: capitalPorCuota,
+        interes: interesPorCuota,
+        cuotaMensual: capitalPorCuota + interesPorCuota,
+        saldoInsoluto: principal - (capitalPorCuota * (i + 1))
+      });
+    }
+    return schedule;
+  }
+  
+  // CON INTERÉS MENSUAL O ANUAL: Sistema Francés
+  let r_monthly;
+  
+  if (interestPeriod === 'monthly') {
+    r_monthly = annualRate / 100;
+  } else if (interestPeriod === 'annual') {
+    // Convertir TEA a TEM
+    const r_annual = annualRate / 100;
+    r_monthly = Math.pow(1 + r_annual, 1 / 12) - 1;
+  }
+  
+  // Calcular cuota fija usando fórmula francesa
+  const pow = Math.pow(1 + r_monthly, installments);
+  const cuotaFija = (principal * (r_monthly * pow)) / (pow - 1);
+  
+  let saldoInsoluto = principal;
+  
+  for (let i = 0; i < installments; i++) {
+    // Interés del mes = saldo insoluto × tasa mensual
+    const interesMes = saldoInsoluto * r_monthly;
+    
+    // Capital amortizado = cuota fija - interés del mes
+    const capitalMes = cuotaFija - interesMes;
+    
+    schedule.push({
+      cuota: i + 1,
+      capital: capitalMes,
+      interes: interesMes,
+      cuotaMensual: cuotaFija,
+      saldoInsoluto: Math.max(0, saldoInsoluto - capitalMes)
+    });
+    
+    // Actualizar saldo insoluto
+    saldoInsoluto -= capitalMes;
+  }
+  
+  return schedule;
+};
+
+// Obtener todas las deudas del usuario con sus pagos
 export const getUserDebts = async () => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -49,6 +107,14 @@ export const getUserDebts = async () => {
 
         const nextPayment = payments.find(p => !p.paid);
         
+        // 🔥 CALCULAR TABLA DE AMORTIZACIÓN
+        const amortizationSchedule = calculateAmortizationSchedule(
+          parseFloat(debt.principal),
+          parseFloat(debt.interest_rate),
+          debt.installments,
+          debt.interest_period
+        );
+        
         return {
           id: debt.id,
           name: debt.name,
@@ -69,19 +135,20 @@ export const getUserDebts = async () => {
             paid: p.paid,
             paidAt: p.paid_at
           })),
-          nextPaymentDate: nextPayment?.date || null
+          nextPaymentDate: nextPayment?.date || null,
+          amortizationSchedule // 🔥 NUEVA: Tabla de amortización
         };
       })
     );
 
     return { success: true, data: debtsWithPayments };
   } catch (error) {
-    console.error('❌ Error obteniendo deudas:', error);
+    console.error('Error obteniendo deudas:', error);
     return { success: false, error: error.message };
   }
 };
 
-// ✅ Crear una nueva deuda con sus pagos
+// Crear una nueva deuda con sus pagos
 export const createDebt = async (debtData) => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -109,10 +176,10 @@ export const createDebt = async (debtData) => {
 
     if (debtError) throw debtError;
 
-    // Generar fechas correctamente
+    // Generar fechas correctamente sumando (idx + 1)
     const payments = [];
     for (let idx = 0; idx < debtData.installments; idx++) {
-      const date = addMonths(new Date(debtData.startDate + 'T00:00:00'), idx);
+      const date = addMonths(new Date(debtData.startDate + 'T00:00:00'), idx + 1);
       payments.push({
         debt_id: newDebt.id,
         date: date.toISOString().split('T')[0],
@@ -128,7 +195,7 @@ export const createDebt = async (debtData) => {
 
     if (paymentsError) throw paymentsError;
 
-    console.log('✅ Deuda creada:', newDebt.id);
+    console.log('Deuda creada:', newDebt.id);
 
     return { 
       success: true, 
@@ -138,12 +205,12 @@ export const createDebt = async (debtData) => {
       } 
     };
   } catch (error) {
-    console.error('❌ Error creando deuda:', error);
+    console.error('Error creando deuda:', error);
     return { success: false, error: error.message };
   }
 };
 
-// ✅ Marcar un pago como pagado
+// Marcar un pago como pagado
 export const markPaymentAsPaid = async (paymentId) => {
   try {
     const { data, error } = await supabase
@@ -180,15 +247,15 @@ export const markPaymentAsPaid = async (paymentId) => {
       }
     }
 
-    console.log('✅ Pago marcado como pagado');
+    console.log('Pago marcado como pagado');
     return { success: true, data };
   } catch (error) {
-    console.error('❌ Error marcando pago:', error);
+    console.error('Error marcando pago:', error);
     return { success: false, error: error.message };
   }
 };
 
-// ✅ Eliminar una deuda (y sus pagos por CASCADE)
+// Eliminar una deuda (y sus pagos por CASCADE)
 export const deleteDebt = async (debtId) => {
   try {
     const { error } = await supabase
@@ -198,30 +265,66 @@ export const deleteDebt = async (debtId) => {
 
     if (error) throw error;
 
-    console.log('✅ Deuda eliminada');
+    console.log('Deuda eliminada');
     return { success: true };
   } catch (error) {
-    console.error('❌ Error eliminando deuda:', error);
+    console.error('Error eliminando deuda:', error);
     return { success: false, error: error.message };
   }
 };
 
-// 🔥 ACTUALIZAR DEUDA CON RECÁLCULO DE CUOTAS (CORREGIDO - ELIMINA TODO)
+// Actualizar deuda con recálculo de cuotas
 export const updateDebtWithPayments = async (debtId, updates) => {
   try {
-    console.log('📝 Iniciando actualización:', { debtId, updates });
+    console.log('🔄 Iniciando actualización:', { debtId, updates });
 
     const cuotaNumerica = parseFloat(updates.cuota);
     const installmentsNumerica = parseInt(updates.installments);
     const totalAmountNumerica = parseFloat(updates.totalAmount);
 
-    console.log('🔢 Valores numéricos:', { 
+    console.log('📊 Valores numéricos:', { 
       cuota: cuotaNumerica, 
       installments: installmentsNumerica, 
       totalAmount: totalAmountNumerica 
     });
 
-    // 1. Actualizar la deuda
+    // 🔥 PASO 1: VERIFICAR Y ELIMINAR PAGOS ANTIGUOS PRIMERO
+    console.log('🗑️ Verificando pagos existentes...');
+    
+    const { data: existingPayments, error: checkError } = await supabase
+      .from('payments')
+      .select('id')
+      .eq('debt_id', debtId);
+
+    if (checkError) {
+      console.error('❌ Error verificando pagos:', checkError);
+      throw checkError;
+    }
+    
+    console.log(`📋 Pagos existentes encontrados: ${existingPayments?.length || 0}`);
+
+    if (existingPayments && existingPayments.length > 0) {
+      console.log('🗑️ Eliminando pagos antiguos...');
+      
+      const { error: deleteError } = await supabase
+        .from('payments')
+        .delete()
+        .eq('debt_id', debtId);
+
+      if (deleteError) {
+        console.error('❌ Error eliminando pagos:', deleteError);
+        throw deleteError;
+      }
+      
+      console.log('✅ Todos los pagos antiguos eliminados');
+      
+      // Esperar un momento para asegurar que la BD procesó la eliminación
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // 🔥 PASO 2: ACTUALIZAR LA DEUDA
+    console.log('📝 Actualizando deuda...');
+    
     const { data: updatedDebt, error: debtError } = await supabase
       .from('debts')
       .update({
@@ -241,38 +344,30 @@ export const updateDebtWithPayments = async (debtId, updates) => {
       .select()
       .single();
 
-    if (debtError) throw debtError;
-    console.log('✅ Deuda actualizada en BD');
-
-    // 🔥 2. ELIMINAR **TODOS** LOS PAGOS ANTIGUOS (sin importar si están pagados o no)
-    console.log('🗑️ Eliminando TODOS los pagos antiguos...');
-    
-    const { error: deleteError } = await supabase
-      .from('payments')
-      .delete()
-      .eq('debt_id', debtId);
-
-    if (deleteError) {
-      console.error('❌ Error eliminando pagos:', deleteError);
-      throw deleteError;
+    if (debtError) {
+      console.error('❌ Error actualizando deuda:', debtError);
+      throw debtError;
     }
     
-    console.log('✅ Todos los pagos antiguos eliminados');
+    console.log('✅ Deuda actualizada en BD');
 
-    // 3. CREAR nuevos pagos desde cero
+    // 🔥 PASO 3: CREAR NUEVOS PAGOS DESDE CERO
+    console.log('➕ Creando nuevos pagos...');
+    
     const newPayments = [];
     for (let idx = 0; idx < installmentsNumerica; idx++) {
-      const date = addMonths(new Date(updates.startDate + 'T00:00:00'), idx);
+      const date = addMonths(new Date(updates.startDate + 'T00:00:00'), idx + 1);
       
       newPayments.push({
         debt_id: debtId,
         date: date.toISOString().split('T')[0],
         amount: cuotaNumerica,
-        paid: false
+        paid: false,
+        paid_at: null
       });
     }
 
-    console.log('📋 Nuevos pagos a crear:', newPayments.length);
+    console.log(`📦 Nuevos pagos a crear: ${newPayments.length}`);
 
     const { data: createdPayments, error: paymentsError } = await supabase
       .from('payments')
@@ -284,7 +379,7 @@ export const updateDebtWithPayments = async (debtId, updates) => {
       throw paymentsError;
     }
     
-    console.log('✅ Nuevos pagos generados:', createdPayments.length);
+    console.log(`✅ ${createdPayments.length} nuevos pagos creados exitosamente`);
 
     return { 
       success: true, 
@@ -299,7 +394,7 @@ export const updateDebtWithPayments = async (debtId, updates) => {
   }
 };
 
-// ✅ Actualizar una deuda (versión antigua, sin recálculo)
+// Actualizar una deuda (versión antigua, sin recálculo)
 export const updateDebt = async (debtId, updates) => {
   try {
     const { data, error } = await supabase
@@ -314,10 +409,10 @@ export const updateDebt = async (debtId, updates) => {
 
     if (error) throw error;
 
-    console.log('✅ Deuda actualizada');
+    console.log('Deuda actualizada');
     return { success: true, data };
   } catch (error) {
-    console.error('❌ Error actualizando deuda:', error);
+    console.error('Error actualizando deuda:', error);
     return { success: false, error: error.message };
   }
 };

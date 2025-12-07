@@ -81,7 +81,6 @@ function AppContent() {
     if (result.success) {
       console.log('✅ Deuda creada en Supabase');
       setConfirmationMessage('✅ Deuda creada correctamente');
-      // Recargar deudas INMEDIATAMENTE
       await reloadDebts();
     } else {
       console.error('❌ Error creando deuda:', result.error);
@@ -98,7 +97,6 @@ function AppContent() {
     if (result.success) {
       console.log('✅ Pago marcado en Supabase');
       setConfirmationMessage('✅ Pago marcado correctamente');
-      // Recargar deudas INMEDIATAMENTE
       await reloadDebts();
     } else {
       console.error('❌ Error marcando pago:', result.error);
@@ -106,7 +104,7 @@ function AppContent() {
     }
   };
 
-  // ✅ EDITAR DEUDA CON RECÁLCULO DE CUOTAS - RECARGA INMEDIATA
+  // 🔥 EDITAR DEUDA - CORREGIDO CON interestPeriod
   const handleEditDebt = async (debtId, editedDebt) => {
     console.log("✏️ Editando deuda en Supabase:", { debtId, editedDebt });
     
@@ -120,16 +118,15 @@ function AppContent() {
         startDate: editedDebt.startDate,
         principal: editedDebt.principal || editedDebt.totalAmount,
         interestRate: editedDebt.interestRate || 0,
+        interestPeriod: editedDebt.interestPeriod || 'monthly', // 🔥 CORREGIDO: Ahora se pasa interestPeriod
         totalInterest: editedDebt.totalInterest || 0,
       });
       
       if (result.success) {
         console.log('✅ Deuda editada y cuotas recalculadas en Supabase');
         setConfirmationMessage('✅ Deuda actualizada correctamente');
-        
-        // 🔥 RECARGAR INMEDIATAMENTE (sin setTimeout)
         await reloadDebts();
-        console.log('🔄 Deudas recargadas inmediatamente después de editar');
+        console.log('🔄 Deudas recargadas después de editar');
       } else {
         console.error('❌ Error editando deuda:', result.error);
         setConfirmationMessage('❌ Error al editar la deuda');
@@ -150,8 +147,6 @@ function AppContent() {
       if (result.success) {
         console.log('✅ Deuda eliminada en Supabase');
         setConfirmationMessage('✅ Deuda eliminada correctamente');
-        
-        // Recargar deudas INMEDIATAMENTE
         await reloadDebts();
       } else {
         console.error('❌ Error eliminando deuda:', result.error);

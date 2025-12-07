@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AddDebtModal from "../components/dashboard/AddDebtModal";
 
@@ -9,7 +9,6 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Buscar deuda - dependencia del refreshTrigger fuerza re-render
   const debt = debts.find(d => String(d.id) === String(debtId));
 
   if (!debt) {
@@ -33,12 +32,74 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
     );
   }
 
-  // 🔥 FILTRAR SOLO PAGOS VÁLIDOS (que coincidan con la cuota actual)
-  const validPayments = debt.payments?.filter(p => 
-    Math.abs(p.amount - debt.cuota) < 0.01
-  ) || [];
+  // 🔥 CALCULAR TABLA DE AMORTIZACIÓN (por si no viene del servicio)
+  const calculateAmortizationSchedule = (principal, annualRate, installments, interestPeriod) => {
+    const schedule = [];
+    
+    if (annualRate === 0 || interestPeriod === 'unique') {
+      const capitalPorCuota = principal / installments;
+      let interesPorCuota = 0;
+      
+      if (interestPeriod === 'unique' && annualRate > 0) {
+        const totalInterest = (principal * annualRate) / 100;
+        interesPorCuota = totalInterest / installments;
+      }
+      
+      for (let i = 0; i < installments; i++) {
+        schedule.push({
+          cuota: i + 1,
+          capital: capitalPorCuota,
+          interes: interesPorCuota,
+          cuotaMensual: capitalPorCuota + interesPorCuota,
+          saldoInsoluto: principal - (capitalPorCuota * (i + 1))
+        });
+      }
+      return schedule;
+    }
+    
+    let r_monthly;
+    
+    if (interestPeriod === 'monthly') {
+      r_monthly = annualRate / 100;
+    } else if (interestPeriod === 'annual') {
+      const r_annual = annualRate / 100;
+      r_monthly = Math.pow(1 + r_annual, 1 / 12) - 1;
+    }
+    
+    const pow = Math.pow(1 + r_monthly, installments);
+    const cuotaFija = (principal * (r_monthly * pow)) / (pow - 1);
+    
+    let saldoInsoluto = principal;
+    
+    for (let i = 0; i < installments; i++) {
+      const interesMes = saldoInsoluto * r_monthly;
+      const capitalMes = cuotaFija - interesMes;
+      
+      schedule.push({
+        cuota: i + 1,
+        capital: capitalMes,
+        interes: interesMes,
+        cuotaMensual: cuotaFija,
+        saldoInsoluto: Math.max(0, saldoInsoluto - capitalMes)
+      });
+      
+      saldoInsoluto -= capitalMes;
+    }
+    
+    return schedule;
+  };
 
-  // 🔥 Cálculos usando SOLO pagos válidos
+  // Calcular tabla de amortización si no existe
+  const amortizationSchedule = debt.amortizationSchedule || calculateAmortizationSchedule(
+    debt.principal || debt.totalAmount,
+    debt.interestRate || 0,
+    debt.installments,
+    debt.interestPeriod || 'monthly'
+  );
+  
+  const validPayments = debt.payments || [];
+
+  // Cálculos usando pagos válidos
   const totalPaid = validPayments
     .filter(p => p.paid)
     .reduce((sum, p) => sum + (p.amount || 0), 0);
@@ -49,7 +110,7 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
 
   const paidInstallments = validPayments.filter(p => p.paid).length;
   const pendingInstallments = validPayments.filter(p => !p.paid).length;
-  const totalInstallments = validPayments.length || debt.installments || 0;
+  const totalInstallments = debt.installments || 0;
   const progressPercentage = totalInstallments > 0 ? (paidInstallments / totalInstallments) * 100 : 0;
 
   // Valores reales
@@ -58,9 +119,17 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
   const interestRate = debt.interestRate || 0;
   const interestPeriod = debt.interestPeriod || 'N/A';
 
-  const interestPerInstallment = totalInstallments > 0 ? totalInterest / totalInstallments : 0;
-  const interestPaid = interestPerInstallment * paidInstallments;
-  const interestPending = totalInterest - interestPaid;
+  // 🔥 CALCULAR INTERESES PAGADOS Y PENDIENTES CORRECTAMENTE
+  let interestPaid = 0;
+  let interestPending = 0;
+
+  amortizationSchedule.forEach((row, idx) => {
+    if (validPayments[idx]?.paid) {
+      interestPaid += row.interes;
+    } else {
+      interestPending += row.interes;
+    }
+  });
 
   const handlePay = (paymentId) => {
     onMarkAsPaid(debt.id, paymentId);
@@ -69,7 +138,6 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
   const handleEdit = (editedDebt) => {
     onEditDebt(debt.id, editedDebt);
     setIsEditModalOpen(false);
-    // Forzar re-render después de editar
     setTimeout(() => {
       setRefreshTrigger(prev => prev + 1);
     }, 500);
@@ -275,6 +343,7 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Cuota</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Capital</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Interés</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Saldo</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha Pago</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acción</th>
@@ -298,8 +367,11 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
                       })
                     : '-';
 
-                  const capitalPorCuota = totalInstallments > 0 ? principal / totalInstallments : 0;
-                  const interesPorCuota = totalInstallments > 0 ? totalInterest / totalInstallments : 0;
+                  // 🔥 OBTENER DATOS DE LA TABLA DE AMORTIZACIÓN
+                  const amortRow = amortizationSchedule[idx] || { capital: 0, interes: 0, saldoInsoluto: 0 };
+                  const capitalPorCuota = amortRow.capital;
+                  const interesPorCuota = amortRow.interes;
+                  const saldoInsoluto = amortRow.saldoInsoluto;
 
                   const today = new Date();
                   today.setHours(0, 0, 0, 0);
@@ -336,6 +408,9 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-orange-600">
                         S/ {interesPorCuota.toFixed(2)}
                       </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600">
+                        S/ {saldoInsoluto.toFixed(2)}
+                      </td>
                       <td className="px-4 py-3 whitespace-nowrap text-center">
                         {payment.paid ? (
                           <span className="inline-flex items-center px-3 py-1 rounded-full bg-green-100 text-green-800 text-xs font-semibold">
@@ -369,7 +444,7 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
                 })
               ) : (
                 <tr>
-                  <td colSpan="8" className="px-4 py-6 text-center text-gray-500">
+                  <td colSpan="9" className="px-4 py-6 text-center text-gray-500">
                     No hay pagos registrados para esta deuda.
                   </td>
                 </tr>
@@ -381,14 +456,15 @@ function DebtDetail({ debts, onMarkAsPaid, onEditDebt, onDeleteDebt }) {
         <div className="mt-4 p-4 bg-gray-50 rounded-lg">
           <p className="text-xs text-gray-600 font-semibold mb-2">📌 Información de la tabla:</p>
           <ul className="text-xs text-gray-600 space-y-1">
-            <li><strong>Capital:</strong> Parte del pago que reduce tu deuda principal</li>
-            <li><strong>Interés:</strong> Parte del pago que corresponde a los intereses</li>
+            <li><strong>Capital:</strong> Parte del pago que reduce tu deuda principal (calculado con Sistema Francés)</li>
+            <li><strong>Interés:</strong> Parte del pago que corresponde a los intereses del mes</li>
+            <li><strong>Saldo:</strong> Deuda restante después de pagar esta cuota</li>
             <li><strong>Cuota:</strong> Monto total a pagar cada mes (Capital + Interés)</li>
           </ul>
         </div>
       </div>
 
-      {/* Modal de edición - key es importante para forzar re-render */}
+      {/* Modal de edición */}
       <AddDebtModal
         key={refreshTrigger}
         isOpen={isEditModalOpen}
