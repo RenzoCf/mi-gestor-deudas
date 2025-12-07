@@ -19,12 +19,10 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
 
   const [error, setError] = useState("");
 
-  // PRECARGA DATOS AL ABRIR EN MODO EDICIÓN
+  // --- EFECTOS DE CARGA Y LIMPIEZA ---
   useEffect(() => {
     if (isEditing && initialData) {
-      console.log("Precargando datos para edición:", initialData);
-      
-      const newFormData = {
+      setFormData({
         name: initialData.name || "",
         lender: initialData.lender || "",
         principal: (initialData.principal || "").toString(),
@@ -32,18 +30,10 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
         interestPeriod: initialData.interestPeriod || "monthly",
         installments: (initialData.installments || "").toString(),
         startDate: initialData.startDate || "",
-      };
-      
-      setFormData(newFormData);
-      setCalculatedData({
-        totalAmount: initialData.totalAmount || 0,
-        cuota: initialData.cuota || 0,
-        totalInterest: initialData.totalInterest || 0,
       });
     }
-  }, [isEditing, initialData?.id]);
+  }, [isEditing, initialData]);
 
-  // NUEVA DEUDA - LIMPIAR
   useEffect(() => {
     if (isOpen && !isEditing) {
       setFormData({
@@ -60,11 +50,12 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     }
   }, [isOpen, isEditing]);
 
-  // CALCULAR cuando cambien los valores
+  // --- CÁLCULOS EN TIEMPO REAL ---
   useEffect(() => {
     const principal = parseFloat(formData.principal || 0);
     const interestRate = parseFloat(formData.interestRate || 0);
-    const installments = parseInt(formData.installments || 0);
+    let installments = parseInt(formData.installments || 0);
+    if (formData.interestPeriod === 'unique') installments = 1;
 
     if (principal > 0 && installments > 0) {
       let totalAmount, cuota, totalInterest;
@@ -78,9 +69,8 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
           case "unique":
             totalInterest = (principal * interestRate) / 100;
             totalAmount = principal + totalInterest;
-            cuota = totalAmount / installments;
+            cuota = totalAmount; 
             break;
-
           case "monthly":
             const r_monthly = interestRate / 100;
             const pow = Math.pow(1 + r_monthly, installments);
@@ -88,9 +78,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
             totalAmount = cuota * installments;
             totalInterest = totalAmount - principal;
             break;
-
           case "annual":
-            // 🔥 CORRECTO: Convertir TEA a TEM
             const r_annual = interestRate / 100;
             const r_monthly_from_annual = Math.pow(1 + r_annual, 1 / 12) - 1;
             const pow2 = Math.pow(1 + r_monthly_from_annual, installments);
@@ -98,15 +86,10 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
             totalAmount = cuota * installments;
             totalInterest = totalAmount - principal;
             break;
-
           default:
-            totalAmount = 0;
-            cuota = 0;
-            totalInterest = 0;
+            totalAmount = 0; cuota = 0; totalInterest = 0;
         }
       }
-
-      console.log("Calculado:", { cuota, totalAmount, totalInterest });
 
       setCalculatedData({
         totalAmount: isNaN(totalAmount) ? 0 : totalAmount,
@@ -116,46 +99,28 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     } else {
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
     }
-  }, [
-    formData.principal,
-    formData.interestRate,
-    formData.installments,
-    formData.interestPeriod,
-  ]);
+  }, [formData.principal, formData.interestRate, formData.installments, formData.interestPeriod]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setError("");
 
-    if (
-      !formData.name ||
-      !formData.lender ||
-      !formData.principal ||
-      !formData.installments ||
-      !formData.startDate
-    ) {
-      setError("Por favor completa todos los campos requeridos");
+    if (!formData.name || !formData.lender || !formData.principal || !formData.startDate) {
+      setError("Completa los campos obligatorios (*)");
       return;
+    }
+    
+    if (formData.interestPeriod !== 'unique' && !formData.installments) {
+        setError("Indica el número de cuotas");
+        return;
     }
 
     const principal = parseFloat(formData.principal);
-    const installments = parseInt(formData.installments);
+    const installments = formData.interestPeriod === 'unique' ? 1 : parseInt(formData.installments);
     const interestRate = parseFloat(formData.interestRate || 0);
 
-    if (principal <= 0) {
-      setError("El monto principal debe ser mayor a 0");
-      return;
-    }
-
-    if (installments <= 0) {
-      setError("El número de cuotas debe ser mayor a 0");
-      return;
-    }
-
-    if (interestRate < 0) {
-      setError("La tasa de interés no puede ser negativa");
-      return;
-    }
+    if (principal <= 0) { setError("El monto debe ser positivo"); return; }
+    if (installments <= 0) { setError("Cuotas inválidas"); return; }
 
     const debtData = {
       name: formData.name.trim(),
@@ -170,232 +135,164 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
       totalInterest: Math.round(calculatedData.totalInterest * 100) / 100,
     };
 
-    console.log("Guardando deuda con datos finales:", debtData);
-
     onAddDebt(debtData);
-
     if (!isEditing) {
-      setFormData({
-        name: "",
-        lender: "",
-        principal: "",
-        interestRate: "",
-        interestPeriod: "monthly",
-        installments: "",
-        startDate: "",
-      });
+      setFormData({ name: "", lender: "", principal: "", interestRate: "", interestPeriod: "monthly", installments: "", startDate: "" });
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
     }
-
-    setError("");
     onClose();
   };
 
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+    <div className="fixed inset-0 bg-slate-900/90 z-50 flex justify-center items-center p-4 backdrop-blur-sm transition-opacity duration-300">
+      
+      {/* MODAL MÁS ANCHO Y BAJO (ESTILO DASHBOARD) */}
+      <div 
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden relative transform transition-all scale-100 animate-fade-in-up flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-2xl font-bold text-gray-800 mb-6">
-          {isEditing ? "✏️ Editar Deuda" : "➕ Nueva Deuda"}
-        </h3>
-
-        {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-            {error}
-          </div>
-        )}
         
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Nombre de la deuda *
-              </label>
-              <input
-                type="text"
-                placeholder="Ej: Préstamo Yape"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                required
-              />
+        {/* HEADER COMPACTO */}
+        <div className="bg-slate-900 px-6 py-4 flex justify-between items-center text-white shrink-0">
+            <div className="flex items-center gap-3">
+                <div className="bg-indigo-600 p-1.5 rounded-lg">
+                    <span className="text-lg">📝</span>
+                </div>
+                <div>
+                    <h3 className="text-lg font-bold tracking-tight leading-none">
+                        {isEditing ? "Editar Préstamo" : "Nueva Deuda"}
+                    </h3>
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider mt-0.5">Gestión Financiera</p>
+                </div>
             </div>
+            <button onClick={onClose} className="hover:bg-white/10 p-1.5 rounded-full transition-colors">
+                <svg className="w-5 h-5 text-slate-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+        </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Entidad *
-              </label>
-              <input
-                type="text"
-                placeholder="Ej: BCP, Saga Falabella"
-                value={formData.lender}
-                onChange={(e) => setFormData({ ...formData, lender: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-            <h4 className="font-semibold text-blue-900 mb-3">💰 Datos Financieros</h4>
+        {/* CUERPO EN GRILLA (SIN SCROLL) */}
+        <form onSubmit={handleSubmit} className="flex flex-col md:flex-row h-full">
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Monto principal (S/) *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  placeholder="50000.00"
-                  value={formData.principal}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    if (value === "" || parseFloat(value) >= 0) {
-                      setFormData({ ...formData, principal: value });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "-" || e.key === "e" || e.key === "E") {
-                      e.preventDefault();
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-              </div>
+            {/* COLUMNA IZQUIERDA: DATOS BÁSICOS */}
+            <div className="flex-1 p-6 space-y-5 border-r border-slate-100">
+                {error && (
+                    <div className="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-xs font-bold border border-red-100 flex items-center gap-2">
+                        <span>⚠️</span> {error}
+                    </div>
+                )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Número de cuotas *
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="20"
-                  value={formData.installments}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    if (value === "" || (parseInt(value) >= 1 && !value.includes("."))) {
-                      setFormData({ ...formData, installments: value });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "-" || e.key === "." || e.key === "," || e.key === "e" || e.key === "E") {
-                      e.preventDefault();
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tipo de interés *
-              </label>
-              <select
-                value={formData.interestPeriod}
-                onChange={(e) => setFormData({ ...formData, interestPeriod: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="unique">Cargo único (Ej: Yape, préstamos express)</option>
-                <option value="monthly">Interés mensual (Ej: Tarjeta de crédito)</option>
-                <option value="annual">Interés anual - TEA (Ej: Préstamo bancario)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tasa de interés (%)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="100"
-                placeholder="17.02"
-                value={formData.interestRate}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === "" || (parseFloat(value) >= 0 && parseFloat(value) <= 100)) {
-                    setFormData({ ...formData, interestRate: value });
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "-" || e.key === "e" || e.key === "E") {
-                    e.preventDefault();
-                  }
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Deja en 0 si no tiene intereses</p>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Fecha de primer pago *
-            </label>
-            <input
-              type="date"
-              value={formData.startDate}
-              onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              required
-            />
-          </div>
-
-          {calculatedData.totalAmount > 0 && (
-            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-              <h4 className="font-semibold text-green-900 mb-3">✅ Resumen Calculado (Sistema Francés)</h4>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <p className="text-sm text-gray-600">Cuota mensual</p>
-                  <p className="text-xl font-bold text-green-700">
-                    S/ {calculatedData.cuota.toFixed(2)}
-                  </p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">Nombre Referencial</label>
+                        <input
+                            type="text" placeholder="Ej: Préstamo Coche" autoFocus
+                            value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm font-semibold text-slate-700 outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">Entidad / Banco</label>
+                        <input
+                            type="text" placeholder="Ej: BCP"
+                            value={formData.lender} onChange={(e) => setFormData({ ...formData, lender: e.target.value })}
+                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm font-semibold text-slate-700 outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">
+                            {formData.interestPeriod === 'unique' ? 'Fecha de Vencimiento' : 'Fecha Primer Pago'}
+                        </label>
+                        <input
+                            type="date"
+                            value={formData.startDate} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                            className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm font-medium text-slate-700 outline-none"
+                        />
+                    </div>
                 </div>
-                <div>
-                  <p className="text-sm text-gray-600">Intereses totales</p>
-                  <p className="text-xl font-bold text-orange-600">
-                    S/ {calculatedData.totalInterest.toFixed(2)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Total a pagar</p>
-                  <p className="text-xl font-bold text-indigo-700">
-                    S/ {calculatedData.totalAmount.toFixed(2)}
-                  </p>
-                </div>
-              </div>
             </div>
-          )}
 
-          <div className="flex gap-3 mt-6 pt-4 border-t">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md transition font-medium"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-semibold transition"
-            >
-              {isEditing ? "✏️ Actualizar Deuda" : "➕ Guardar Deuda"}
-            </button>
-          </div>
+            {/* COLUMNA DERECHA: CALCULADORA (FONDO AZULADO) */}
+            <div className="flex-1 p-6 bg-indigo-50/30 flex flex-col justify-between">
+                
+                <div className="space-y-4">
+                    <div className="flex gap-4">
+                        <div className="flex-1">
+                            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1 ml-1">Monto Principal</label>
+                            <div className="relative">
+                                <span className="absolute left-3 top-2.5 text-indigo-400 font-bold">S/</span>
+                                <input
+                                    type="number" step="0.01" min="0.01" placeholder="0.00"
+                                    value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })}
+                                    className="w-full pl-8 pr-3 py-2.5 bg-white border border-indigo-100 rounded-lg focus:ring-2 focus:ring-indigo-500 text-lg font-bold text-slate-800 placeholder-slate-300 outline-none"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1 ml-1">Tipo Interés</label>
+                            <select
+                                value={formData.interestPeriod}
+                                onChange={(e) => setFormData({ ...formData, interestPeriod: e.target.value })}
+                                className="w-full px-2 py-2.5 bg-white border border-indigo-100 rounded-lg focus:ring-2 focus:ring-indigo-500 text-xs font-bold text-slate-600 outline-none"
+                            >
+                                <option value="unique">Único (Flat)</option>
+                                <option value="monthly">Mensual</option>
+                                <option value="annual">Anual (TEA)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1 ml-1">Tasa (%)</label>
+                            <input
+                                type="number" step="0.01" min="0" max="100" placeholder="0%"
+                                value={formData.interestRate} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })}
+                                className="w-full px-3 py-2.5 bg-white border border-indigo-100 rounded-lg focus:ring-2 focus:ring-indigo-500 text-right font-bold text-sm text-slate-700 outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    {formData.interestPeriod !== 'unique' && (
+                        <div>
+                            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1 ml-1">Cuotas</label>
+                            <div className="flex items-center bg-white border border-indigo-100 rounded-lg overflow-hidden">
+                                <button type="button" onClick={() => setFormData(p => ({...p, installments: Math.max(1, (parseInt(p.installments)||0)-1)}))} className="px-3 py-2.5 hover:bg-indigo-50 text-indigo-600 font-bold">-</button>
+                                <input
+                                    type="number" min="1" placeholder="12"
+                                    value={formData.installments} onChange={(e) => setFormData({ ...formData, installments: e.target.value })}
+                                    className="w-full py-2.5 text-center outline-none font-bold text-slate-700 text-sm"
+                                />
+                                <button type="button" onClick={() => setFormData(p => ({...p, installments: (parseInt(p.installments)||0)+1}))} className="px-3 py-2.5 hover:bg-indigo-50 text-indigo-600 font-bold">+</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* RESUMEN FINAL COMPACTO */}
+                <div className="mt-6 pt-4 border-t border-indigo-200">
+                    <div className="flex justify-between items-end mb-1">
+                        <span className="text-xs text-slate-500 font-medium">Cuota Estimada</span>
+                        <span className="text-lg font-bold text-slate-800">S/ {calculatedData.cuota.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-end">
+                        <span className="text-xs text-slate-500 font-medium">Total Final</span>
+                        <span className="text-sm font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">S/ {calculatedData.totalAmount.toFixed(2)}</span>
+                    </div>
+                </div>
+
+                {/* BOTONES ACCIÓN */}
+                <div className="flex gap-3 mt-5">
+                    <button type="button" onClick={onClose} className="px-4 py-2.5 bg-white border border-slate-200 text-slate-500 font-bold rounded-lg text-xs hover:bg-slate-50 transition">
+                        Cancelar
+                    </button>
+                    <button type="submit" className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-md transform active:scale-95 transition text-xs uppercase tracking-wide">
+                        {isEditing ? "Guardar" : "Crear Deuda"}
+                    </button>
+                </div>
+
+            </div>
         </form>
       </div>
     </div>

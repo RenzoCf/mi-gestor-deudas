@@ -1,6 +1,8 @@
 import { supabase } from '../supabaseClient';
 
-// Función auxiliar mejorada para sumar meses correctamente
+// --- FUNCIONES AUXILIARES ---
+
+// Función para sumar meses correctamente (ej: 31 Ene + 1 mes = 28 Feb)
 const addMonths = (date, months) => {
   const d = new Date(date);
   const originalDay = d.getDate();
@@ -15,7 +17,7 @@ const addMonths = (date, months) => {
   return d;
 };
 
-// 🔥 NUEVA: Función para calcular tabla de amortización (Sistema Francés)
+// Función para calcular tabla de amortización (Sistema Francés)
 export const calculateAmortizationSchedule = (principal, annualRate, installments, interestPeriod) => {
   const schedule = [];
   
@@ -80,7 +82,9 @@ export const calculateAmortizationSchedule = (principal, annualRate, installment
   return schedule;
 };
 
-// Obtener todas las deudas del usuario con sus pagos
+// --- SERVICIOS DE BASE DE DATOS ---
+
+// 1. Obtener todas las deudas del usuario con sus pagos
 export const getUserDebts = async () => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -97,6 +101,7 @@ export const getUserDebts = async () => {
 
     const debtsWithPayments = await Promise.all(
       debts.map(async (debt) => {
+        // Obtenemos los pagos con los nuevos campos (payment_method, receipt_url)
         const { data: payments, error: paymentsError } = await supabase
           .from('payments')
           .select('*')
@@ -107,7 +112,7 @@ export const getUserDebts = async () => {
 
         const nextPayment = payments.find(p => !p.paid);
         
-        // 🔥 CALCULAR TABLA DE AMORTIZACIÓN
+        // Calcular tabla de amortización al vuelo
         const amortizationSchedule = calculateAmortizationSchedule(
           parseFloat(debt.principal),
           parseFloat(debt.interest_rate),
@@ -133,10 +138,13 @@ export const getUserDebts = async () => {
             date: p.date,
             amount: parseFloat(p.amount),
             paid: p.paid,
-            paidAt: p.paid_at
+            paidAt: p.paid_at,
+            // Nuevos campos para el historial
+            payment_method: p.payment_method,
+            receipt_url: p.receipt_url
           })),
           nextPaymentDate: nextPayment?.date || null,
-          amortizationSchedule // 🔥 NUEVA: Tabla de amortización
+          amortizationSchedule 
         };
       })
     );
@@ -148,7 +156,7 @@ export const getUserDebts = async () => {
   }
 };
 
-// Crear una nueva deuda con sus pagos
+// 2. Crear una nueva deuda con sus pagos
 export const createDebt = async (debtData) => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -176,7 +184,7 @@ export const createDebt = async (debtData) => {
 
     if (debtError) throw debtError;
 
-    // Generar fechas correctamente sumando (idx + 1)
+    // Generar pagos
     const payments = [];
     for (let idx = 0; idx < debtData.installments; idx++) {
       const date = addMonths(new Date(debtData.startDate + 'T00:00:00'), idx + 1);
@@ -195,14 +203,9 @@ export const createDebt = async (debtData) => {
 
     if (paymentsError) throw paymentsError;
 
-    console.log('Deuda creada:', newDebt.id);
-
     return { 
       success: true, 
-      data: {
-        ...newDebt,
-        payments: createdPayments
-      } 
+      data: { ...newDebt, payments: createdPayments } 
     };
   } catch (error) {
     console.error('Error creando deuda:', error);
@@ -210,14 +213,42 @@ export const createDebt = async (debtData) => {
   }
 };
 
-// Marcar un pago como pagado
-export const markPaymentAsPaid = async (paymentId) => {
+// 3. NUEVO: Subir voucher/foto a Supabase Storage
+export const uploadReceipt = async (file, userId) => {
+  try {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${userId}/${Date.now()}.${fileExt}`;
+    const filePath = `${fileName}`;
+
+    // Subir el archivo
+    const { error: uploadError } = await supabase.storage
+      .from('comprobantes')
+      .upload(filePath, file);
+
+    if (uploadError) throw uploadError;
+
+    // Obtener la URL pública para guardarla en la base de datos
+    const { data } = supabase.storage
+      .from('comprobantes')
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  } catch (error) {
+    console.error('Error subiendo comprobante:', error);
+    return null;
+  }
+};
+
+// 4. ACTUALIZADO: Marcar pago con método y recibo
+export const markPaymentAsPaid = async (paymentId, method, receiptUrl = null) => {
   try {
     const { data, error } = await supabase
       .from('payments')
       .update({ 
         paid: true,
-        paid_at: new Date().toISOString()
+        paid_at: new Date().toISOString(),
+        payment_method: method, // 'card', 'yape', 'cash'
+        receipt_url: receiptUrl // URL de la foto o null
       })
       .eq('id', paymentId)
       .select()
@@ -225,6 +256,7 @@ export const markPaymentAsPaid = async (paymentId) => {
 
     if (error) throw error;
 
+    // Verificar si se completó toda la deuda para cambiar el estado general
     const { data: payment } = await supabase
       .from('payments')
       .select('debt_id')
@@ -247,7 +279,6 @@ export const markPaymentAsPaid = async (paymentId) => {
       }
     }
 
-    console.log('Pago marcado como pagado');
     return { success: true, data };
   } catch (error) {
     console.error('Error marcando pago:', error);
@@ -255,7 +286,7 @@ export const markPaymentAsPaid = async (paymentId) => {
   }
 };
 
-// Eliminar una deuda (y sus pagos por CASCADE)
+// 5. Eliminar una deuda (y sus pagos por CASCADE)
 export const deleteDebt = async (debtId) => {
   try {
     const { error } = await supabase
@@ -265,7 +296,6 @@ export const deleteDebt = async (debtId) => {
 
     if (error) throw error;
 
-    console.log('Deuda eliminada');
     return { success: true };
   } catch (error) {
     console.error('Error eliminando deuda:', error);
@@ -273,58 +303,22 @@ export const deleteDebt = async (debtId) => {
   }
 };
 
-// Actualizar deuda con recálculo de cuotas
+// 6. Actualizar deuda con recálculo completo de cuotas
 export const updateDebtWithPayments = async (debtId, updates) => {
   try {
-    console.log('🔄 Iniciando actualización:', { debtId, updates });
-
     const cuotaNumerica = parseFloat(updates.cuota);
     const installmentsNumerica = parseInt(updates.installments);
     const totalAmountNumerica = parseFloat(updates.totalAmount);
 
-    console.log('📊 Valores numéricos:', { 
-      cuota: cuotaNumerica, 
-      installments: installmentsNumerica, 
-      totalAmount: totalAmountNumerica 
-    });
-
-    // 🔥 PASO 1: VERIFICAR Y ELIMINAR PAGOS ANTIGUOS PRIMERO
-    console.log('🗑️ Verificando pagos existentes...');
-    
-    const { data: existingPayments, error: checkError } = await supabase
+    // a) Eliminar pagos antiguos (Requiere política DELETE en Supabase)
+    const { error: deleteError } = await supabase
       .from('payments')
-      .select('id')
+      .delete()
       .eq('debt_id', debtId);
 
-    if (checkError) {
-      console.error('❌ Error verificando pagos:', checkError);
-      throw checkError;
-    }
+    if (deleteError) throw deleteError;
     
-    console.log(`📋 Pagos existentes encontrados: ${existingPayments?.length || 0}`);
-
-    if (existingPayments && existingPayments.length > 0) {
-      console.log('🗑️ Eliminando pagos antiguos...');
-      
-      const { error: deleteError } = await supabase
-        .from('payments')
-        .delete()
-        .eq('debt_id', debtId);
-
-      if (deleteError) {
-        console.error('❌ Error eliminando pagos:', deleteError);
-        throw deleteError;
-      }
-      
-      console.log('✅ Todos los pagos antiguos eliminados');
-      
-      // Esperar un momento para asegurar que la BD procesó la eliminación
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // 🔥 PASO 2: ACTUALIZAR LA DEUDA
-    console.log('📝 Actualizando deuda...');
-    
+    // b) Actualizar datos de la deuda maestra
     const { data: updatedDebt, error: debtError } = await supabase
       .from('debts')
       .update({
@@ -344,20 +338,12 @@ export const updateDebtWithPayments = async (debtId, updates) => {
       .select()
       .single();
 
-    if (debtError) {
-      console.error('❌ Error actualizando deuda:', debtError);
-      throw debtError;
-    }
-    
-    console.log('✅ Deuda actualizada en BD');
+    if (debtError) throw debtError;
 
-    // 🔥 PASO 3: CREAR NUEVOS PAGOS DESDE CERO
-    console.log('➕ Creando nuevos pagos...');
-    
+    // c) Crear nuevos pagos
     const newPayments = [];
     for (let idx = 0; idx < installmentsNumerica; idx++) {
       const date = addMonths(new Date(updates.startDate + 'T00:00:00'), idx + 1);
-      
       newPayments.push({
         debt_id: debtId,
         date: date.toISOString().split('T')[0],
@@ -367,34 +353,24 @@ export const updateDebtWithPayments = async (debtId, updates) => {
       });
     }
 
-    console.log(`📦 Nuevos pagos a crear: ${newPayments.length}`);
-
     const { data: createdPayments, error: paymentsError } = await supabase
       .from('payments')
       .insert(newPayments)
       .select();
 
-    if (paymentsError) {
-      console.error('❌ Error creando nuevos pagos:', paymentsError);
-      throw paymentsError;
-    }
-    
-    console.log(`✅ ${createdPayments.length} nuevos pagos creados exitosamente`);
+    if (paymentsError) throw paymentsError;
 
     return { 
       success: true, 
-      data: {
-        ...updatedDebt,
-        payments: createdPayments
-      } 
+      data: { ...updatedDebt, payments: createdPayments } 
     };
   } catch (error) {
-    console.error('❌ Error actualizando deuda:', error);
+    console.error('Error actualizando deuda:', error);
     return { success: false, error: error.message };
   }
 };
 
-// Actualizar una deuda (versión antigua, sin recálculo)
+// 7. Actualizar una deuda (Simple, sin recalcular pagos)
 export const updateDebt = async (debtId, updates) => {
   try {
     const { data, error } = await supabase
@@ -409,7 +385,6 @@ export const updateDebt = async (debtId, updates) => {
 
     if (error) throw error;
 
-    console.log('Deuda actualizada');
     return { success: true, data };
   } catch (error) {
     console.error('Error actualizando deuda:', error);

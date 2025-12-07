@@ -24,247 +24,128 @@ function AuthScreen() {
 
     try {
       if (isLogin) {
-        // LOGIN
         if (!formData.email || !formData.password) {
-          setError('Por favor completa todos los campos');
+          setError('Completa todos los campos');
           setLoading(false);
           return;
         }
-
-        console.log('🔑 Intentando login...');
-        const result = await login(formData.email, formData.password); // ✅ AWAIT agregado
-        
-        if (result.success) {
-          console.log('✅ Login exitoso');
-          // El navigate ya se hace automáticamente en AuthContext
-        } else {
-          setError(result.error?.message || 'Credenciales inválidas');
-        }
+        const result = await login(formData.email, formData.password);
+        if (!result.success) setError(result.error?.message || 'Credenciales inválidas');
       } else {
-        // REGISTER
         if (!formData.email || !formData.password || !formData.name) {
-          setError('Por favor completa todos los campos');
+          setError('Completa todos los campos');
           setLoading(false);
           return;
         }
-
-        console.log('📝 Intentando registro...');
-        const result = await register(formData.email, formData.password, formData.name); // ✅ AWAIT agregado
-        
+        const result = await register(formData.email, formData.password, formData.name);
         if (result.success) {
           if (result.needsConfirmation) {
-            // Necesita confirmar email
-            setSuccessMessage('✅ Cuenta creada exitosamente. Por favor revisa tu email para confirmar tu cuenta.');
+            setSuccessMessage('✅ Revisa tu email para confirmar.');
             setFormData({ email: '', password: '', name: '' });
-          } else {
-            // Registro exitoso y autenticado
-            console.log('✅ Registro exitoso - redirigiendo al dashboard');
-            // El navigate ya se hace automáticamente en AuthContext
           }
         } else {
-          setError(result.error?.message || 'Error al registrar usuario');
+          setError(result.error?.message || 'Error al registrar');
         }
       }
     } catch (err) {
-      console.error('❌ Error:', err);
-      setError('Ocurrió un error. Intenta nuevamente.');
+      setError('Ocurrió un error inesperado.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
     setError('');
-    setSuccessMessage('');
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-indigo-500 p-4">
-      <div className="max-w-md w-full">
-        {/* Logo y título */}
-        <div className="text-center mb-8">
-          <div className="inline-block p-4 bg-white rounded-full shadow-lg mb-4">
-            <svg className="w-12 h-12 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+    // CONTENEDOR PRINCIPAL: Altura fija de pantalla, sin scroll (overflow-hidden)
+    <div className="h-screen w-full bg-slate-900 relative flex items-center justify-center overflow-hidden">
+      
+      {/* FONDO ANIMADO (Decoración) */}
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
+        <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] bg-indigo-600 rounded-full blur-[120px] opacity-40 animate-pulse"></div>
+        <div className="absolute top-[20%] -right-[10%] w-[40%] h-[40%] bg-blue-500 rounded-full blur-[100px] opacity-30"></div>
+        <div className="absolute -bottom-[10%] left-[20%] w-[60%] h-[60%] bg-purple-600 rounded-full blur-[120px] opacity-30"></div>
+      </div>
+
+      {/* TARJETA CENTRAL (Glassmorphism) */}
+      <div className="relative z-10 w-full max-w-sm bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-8 mx-4 animate-fade-in-up">
+        
+        {/* LOGO Y TÍTULO */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-tr from-indigo-500 to-blue-500 rounded-xl shadow-lg mb-3">
+            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           </div>
-          <h1 className="text-4xl font-bold text-white mb-2">Finanzas Edu</h1>
-          <p className="text-blue-100">Gestiona tus deudas de forma inteligente</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Finanzas Edu</h1>
+          <p className="text-slate-300 text-sm mt-1">Tu control financiero inteligente</p>
         </div>
 
-        {/* Card de formulario */}
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
-          {/* Tabs */}
-          <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
-            <button
-              type="button"
-              onClick={() => {
-                setIsLogin(true);
-                setError('');
-                setSuccessMessage('');
-                setFormData({ email: '', password: '', name: '' });
-              }}
-              className={`flex-1 py-2 px-4 rounded-md font-semibold transition-all ${
-                isLogin
-                  ? 'bg-white text-blue-600 shadow'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Iniciar Sesión
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsLogin(false);
-                setError('');
-                setSuccessMessage('');
-                setFormData({ email: '', password: '', name: '' });
-              }}
-              className={`flex-1 py-2 px-4 rounded-md font-semibold transition-all ${
-                !isLogin
-                  ? 'bg-white text-blue-600 shadow'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Registrarse
-            </button>
-          </div>
+        {/* MENSAJES DE ERROR/EXITO */}
+        {error && <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-xs text-center font-medium">{error}</div>}
+        {successMessage && <div className="mb-4 p-3 bg-green-500/20 border border-green-500/50 rounded-lg text-green-200 text-xs text-center font-medium">{successMessage}</div>}
 
-          {/* Formulario */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Nombre (solo en registro) */}
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Nombre de usuario
-                </label>
+        {/* FORMULARIO */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          
+          {/* NOMBRE (Solo registro) */}
+          {!isLogin && (
+            <div className="relative">
                 <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  placeholder="usuario123"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                  disabled={loading}
+                  type="text" name="name" placeholder="Nombre completo"
+                  value={formData.name} onChange={handleChange}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-white placeholder-slate-400 text-sm outline-none transition-all"
                 />
-              </div>
-            )}
-
-            {/* Email */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Correo electrónico
-              </label>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                placeholder="tu@email.com"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                disabled={loading}
-              />
+                <span className="absolute left-3 top-3.5 text-slate-400">👤</span>
             </div>
+          )}
 
-            {/* Password */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Contraseña
-              </label>
-              <input
-                type="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                placeholder="••••••••"
-                minLength={6}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                disabled={loading}
-              />
-            </div>
-
-            {/* Success message */}
-            {successMessage && (
-              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
-                {successMessage}
-              </div>
-            )}
-
-            {/* Error message */}
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                {error}
-              </div>
-            )}
-
-            {/* Submit button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition-all ${
-                loading
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
-              }`}
-            >
-              {loading ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Procesando...
-                </span>
-              ) : (
-                <span>{isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}</span>
-              )}
-            </button>
-          </form>
-
-          {/* Footer */}
-          <div className="mt-6 text-center text-sm text-gray-600">
-            {isLogin ? (
-              <p>
-                ¿No tienes cuenta?{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsLogin(false);
-                    setError('');
-                    setSuccessMessage('');
-                  }}
-                  className="text-blue-600 hover:text-blue-700 font-semibold"
-                >
-                  Regístrate aquí
-                </button>
-              </p>
-            ) : (
-              <p>
-                ¿Ya tienes cuenta?{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsLogin(true);
-                    setError('');
-                    setSuccessMessage('');
-                  }}
-                  className="text-blue-600 hover:text-blue-700 font-semibold"
-                >
-                  Inicia sesión
-                </button>
-              </p>
-            )}
+          <div className="relative">
+            <input
+              type="email" name="email" placeholder="Correo electrónico"
+              value={formData.email} onChange={handleChange}
+              className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-white placeholder-slate-400 text-sm outline-none transition-all"
+            />
+            <span className="absolute left-3 top-3.5 text-slate-400">✉️</span>
           </div>
-        </div>
 
-        {/* Copyright */}
-        <p className="text-center text-blue-100 text-sm mt-8">
-          © 2025 Finanzas Edu. Todos los derechos reservados.
-        </p>
+          <div className="relative">
+            <input
+              type="password" name="password" placeholder="Contraseña"
+              value={formData.password} onChange={handleChange}
+              className="w-full pl-10 pr-4 py-3 bg-slate-800/50 border border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-white placeholder-slate-400 text-sm outline-none transition-all"
+            />
+            <span className="absolute left-3 top-3.5 text-slate-400">🔒</span>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-500/30 transition-all transform active:scale-95 flex justify-center items-center gap-2 mt-2"
+          >
+            {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : (isLogin ? 'Ingresar' : 'Registrarse')}
+          </button>
+        </form>
+
+        {/* FOOTER / SWITCH */}
+        <div className="mt-6 text-center">
+          <p className="text-slate-400 text-xs">
+            {isLogin ? "¿No tienes cuenta?" : "¿Ya tienes cuenta?"}
+            <button
+              type="button"
+              onClick={() => { setIsLogin(!isLogin); setError(''); }}
+              className="ml-2 text-indigo-400 hover:text-indigo-300 font-bold transition-colors underline decoration-dotted"
+            >
+              {isLogin ? "Crea una aquí" : "Inicia sesión"}
+            </button>
+          </p>
+        </div>
+      </div>
+
+      {/* COPYRIGHT DISCRETO */}
+      <div className="absolute bottom-4 text-center w-full z-10">
+        <p className="text-slate-500 text-[10px] font-medium tracking-wider opacity-60">© 2025 FINANZAS EDU</p>
       </div>
     </div>
   );
