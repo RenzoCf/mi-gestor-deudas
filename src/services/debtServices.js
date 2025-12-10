@@ -12,28 +12,55 @@ const addMonths = (date, months) => {
   return d;
 };
 
-// Función para calcular tabla de amortización
+// Helper para redondear a 2 decimales
+const round2 = (num) => Math.round(num * 100) / 100;
+
+// Función para calcular tabla de amortización (CORREGIDA PARA REDONDEO EXACTO)
 export const calculateAmortizationSchedule = (principal, annualRate, installments, interestPeriod) => {
   const schedule = [];
+  
+  // --- Caso: Interés Cero o Pago Único ---
   if (annualRate === 0 || interestPeriod === 'unique') {
-    const capitalPorCuota = principal / installments;
-    let interesPorCuota = 0;
+    const capitalPorCuotaNoRedondeada = principal / installments;
+    let interesPorCuotaNoRedondeada = 0;
+    
     if (interestPeriod === 'unique' && annualRate > 0) {
       const totalInterest = (principal * annualRate) / 100;
-      interesPorCuota = totalInterest / installments;
+      interesPorCuotaNoRedondeada = totalInterest / installments;
     }
+    
+    const cuotaMensualRedondeada = round2(capitalPorCuotaNoRedondeada + interesPorCuotaNoRedondeada);
+    
+    let totalPrincipalAcumulado = 0;
+    
     for (let i = 0; i < installments; i++) {
+      let capitalRedondeado = round2(capitalPorCuotaNoRedondeada);
+      let interesRedondeado = cuotaMensualRedondeada - capitalRedondeado;
+      
+      // Ajuste de capital en la última cuota para asegurar el saldo cero
+      if (i === installments - 1) {
+          capitalRedondeado = round2(principal - totalPrincipalAcumulado);
+          interesRedondeado = round2(cuotaMensualRedondeada - capitalRedondeado);
+          // Forzar a que la cuota final sea igual a la cuota mensual, si el ajuste es pequeño.
+          if (round2(capitalRedondeado + interesRedondeado) !== cuotaMensualRedondeada) {
+              interesRedondeado = round2(cuotaMensualRedondeada - capitalRedondeado);
+          }
+      }
+      
+      totalPrincipalAcumulado = round2(totalPrincipalAcumulado + capitalRedondeado);
+
       schedule.push({
         cuota: i + 1,
-        capital: capitalPorCuota,
-        interes: interesPorCuota,
-        cuotaMensual: capitalPorCuota + interesPorCuota,
-        saldoInsoluto: principal - (capitalPorCuota * (i + 1))
+        capital: round2(capitalRedondeado),
+        interes: round2(interesRedondeado),
+        cuotaMensual: cuotaMensualRedondeada,
+        saldoInsoluto: round2(Math.max(0, principal - totalPrincipalAcumulado))
       });
     }
     return schedule;
   }
   
+  // --- Caso: Amortización Francesa (Interés Mensual o Anual) ---
   let r_monthly;
   if (interestPeriod === 'monthly') {
     r_monthly = annualRate / 100;
@@ -43,25 +70,61 @@ export const calculateAmortizationSchedule = (principal, annualRate, installment
   }
   
   const pow = Math.pow(1 + r_monthly, installments);
-  const cuotaFija = (principal * (r_monthly * pow)) / (pow - 1);
-  let saldoInsoluto = principal;
+  const cuotaFijaNoRedondeada = (principal * (r_monthly * pow)) / (pow - 1);
   
+  // 🔥 CORECCIÓN CLAVE: Redondear la cuota fija a 2 decimales
+  const cuotaFija = round2(cuotaFijaNoRedondeada); 
+
+  let saldoInsoluto = principal;
+  let totalCapitalAcumulado = 0;
+
   for (let i = 0; i < installments; i++) {
     const interesMes = saldoInsoluto * r_monthly;
-    const capitalMes = cuotaFija - interesMes;
+    
+    // Redondeamos los componentes
+    let interesRedondeado = round2(interesMes); 
+    let capitalMes = cuotaFija - interesRedondeado;
+    let capitalRedondeado = round2(capitalMes);
+    
+    // Ajuste de Cierre (Última Cuota): Forzar que el saldo quede en cero.
+    if (i === installments - 1) {
+      capitalRedondeado = round2(principal - totalCapitalAcumulado);
+      // Recalculamos el interés de la última cuota para que Cuota-Capital = Interés
+      interesRedondeado = round2(cuotaFija - capitalRedondeado);
+      
+      // Forzar a que la cuota final sea igual a la cuota fija (si el ajuste es muy pequeño)
+      if (round2(capitalRedondeado + interesRedondeado) !== cuotaFija) {
+          interesRedondeado = round2(cuotaFija - capitalRedondeado);
+      }
+    }
+    
+    // Asegurar que Capital + Interés = Cuota Fija (si no se hizo antes por el if)
+    if (round2(capitalRedondeado + interesRedondeado) !== cuotaFija) {
+        capitalRedondeado = round2(cuotaFija - interesRedondeado);
+    }
+    
+    totalCapitalAcumulado = round2(totalCapitalAcumulado + capitalRedondeado);
+    let saldoInsolutoAjustado = round2(Math.max(0, principal - totalCapitalAcumulado));
+
+    // Aseguramos que el saldo final sea 0 en la última cuota
+    if (i === installments - 1) {
+        saldoInsolutoAjustado = 0;
+    }
+    
     schedule.push({
       cuota: i + 1,
-      capital: capitalMes,
-      interes: interesMes,
+      capital: capitalRedondeado,
+      interes: interesRedondeado,
       cuotaMensual: cuotaFija,
-      saldoInsoluto: Math.max(0, saldoInsoluto - capitalMes)
+      saldoInsoluto: saldoInsolutoAjustado
     });
-    saldoInsoluto -= capitalMes;
+    
+    saldoInsoluto = saldoInsolutoAjustado;
   }
   return schedule;
 };
 
-// --- SERVICIOS DE BASE DE DATOS ---
+// --- SERVICIOS DE BASE DE DATOS (MANTENIDO) ---
 
 export const getUserDebts = async () => {
   try {

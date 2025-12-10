@@ -11,6 +11,9 @@ import { registerPushNotification } from "../services/pushService";
 
 const MORA_RATE = 0.01; // 1% de mora fija y universal
 
+// Helper para redondear a 2 decimales para consistencia
+const round2 = (num) => Math.round(num * 100) / 100;
+
 function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
   const { user } = useAuth();
   
@@ -55,27 +58,31 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
   const getValidPayments = (debt) => {
     if (!debt.payments || debt.payments.length === 0) return [];
-    return debt.payments.filter(p => Math.abs(p.amount - debt.cuota) < 0.01);
+    // Aseguramos que el amount base de la cuota esté redondeado para cálculos posteriores
+    return debt.payments.map(p => ({
+        ...p, 
+        amount: round2(p.amount)
+    })).filter(p => Math.abs(p.amount - round2(debt.cuota)) < 0.01);
   };
   
-  // FUNCIÓN CLAVE: CALCULA CUÁNTOS MESES ESTÁ VENCIDA
-  const getOverdueMonths = (paymentDateStr, todayDate) => {
+  // 🔥 CORRECCIÓN CLAVE: La mora solo aplica cuando se cumple el mes completo
+  const getOverdueMonths = (paymentDateStr, checkDate) => {
       const dueDate = new Date(paymentDateStr + "T00:00:00");
       
-      // Si no está vencida, el multiplicador es 0
-      if (todayDate <= dueDate) return 0;
+      // 1. Si la fecha de chequeo es anterior o igual a la fecha de vencimiento, el multiplicador es 0
+      if (checkDate <= dueDate) return 0;
 
-      let months = (todayDate.getFullYear() - dueDate.getFullYear()) * 12;
-      months += todayDate.getMonth() - dueDate.getMonth();
+      let months = (checkDate.getFullYear() - dueDate.getFullYear()) * 12;
+      months += checkDate.getMonth() - dueDate.getMonth();
 
-      // Si el día de hoy es menor que el día de vencimiento,
-      // la penalidad del mes en curso aún no se cumple completamente
-      if (todayDate.getDate() < dueDate.getDate()) {
+      // 2. Ajuste para mes incompleto: Si el día de chequeo es menor al día de vencimiento,
+      // significa que el ciclo completo del mes de mora aún no se cumple.
+      if (checkDate.getDate() < dueDate.getDate()) {
           months--;
       }
       
-      // Aseguramos un mínimo de 1 mes si daysDiff < 0 es verdad (ya pasó el primer día)
-      return Math.max(1, months); 
+      // 3. Devolver el número de meses completos (mínimo 0), SIN FORZAR A 1
+      return Math.max(0, months); 
   };
   // FIN FUNCIÓN CLAVE
 
@@ -97,9 +104,15 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
           
           if (days < 0) {
              const overdueMonths = getOverdueMonths(nextUnpaid.date, today);
-             const penalty = nextUnpaid.amount * MORA_RATE * overdueMonths;
-             amountToShow += penalty;
-             moraText = ` (Incl. mora S/ ${penalty.toFixed(2)})`;
+             let penalty = 0;
+
+             // Solo aplica mora si ha pasado al menos un mes completo (overdueMonths > 0)
+             if (overdueMonths > 0) {
+                 penalty = nextUnpaid.amount * MORA_RATE * overdueMonths;
+                 penalty = round2(penalty); // Redondear mora antes de sumar
+                 amountToShow = round2(amountToShow + penalty);
+                 moraText = ` (Incl. mora S/ ${penalty.toFixed(2)})`;
+             }
           }
 
           const exactMessage = `Monto: S/ ${amountToShow.toFixed(2)}${moraText}`;
@@ -130,9 +143,25 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     if (method === 'cash' && file) {
         receiptUrl = await uploadReceipt(file, user.id);
     }
-    const result = await markPaymentAsPaid(paymentId, method, receiptUrl);
-    if (result.success) window.location.reload();
-    else alert("Error: " + result.error);
+    // Si paymentId es un array (pago masivo), markPaymentAsPaid debe iterar
+    const paymentIdsToMark = Array.isArray(paymentId) ? paymentId : [paymentId];
+    
+    let successCount = 0;
+    
+    for (const id of paymentIdsToMark) {
+        const result = await markPaymentAsPaid(id, method, receiptUrl);
+        if (result.success) {
+            successCount++;
+        } else {
+            console.error(`Error al marcar pago ${id}:`, result.error);
+        }
+    }
+    
+    if (successCount > 0) {
+        window.location.reload(); 
+    } else {
+        alert("Error: No se pudo registrar el pago.");
+    }
   };
 
   const handleShowReceipt = (item) => {
@@ -179,23 +208,42 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
             if (shouldShow) {
                 let penaltyAmount = 0;
-                let finalAmount = payment.amount;
+                let finalAmount = payment.amount; // Monto base
                 let isPenaltyApplied = false;
 
-                // CÁLCULO DE MORA ACUMULATIVA
+                // 1. CÁLCULO DE MORA ACUMULATIVA (PENDIENTES y VENCIDAS)
                 if (daysDiff < 0 && !isPaid) {
                     const overdueMonths = getOverdueMonths(payment.date, today);
-                    penaltyAmount = payment.amount * MORA_RATE * overdueMonths;
-                    finalAmount = payment.amount + penaltyAmount;
-                    isPenaltyApplied = true;
+                    
+                    if (overdueMonths > 0) { // Solo si ha pasado un mes completo
+                        penaltyAmount = payment.amount * MORA_RATE * overdueMonths;
+                        finalAmount = payment.amount + penaltyAmount;
+                        isPenaltyApplied = true;
+                    }
                 }
+                // 2. CÁLCULO DE MORA (PAGADAS, para historial)
+                else if (isPaid && payment.paidAt) {
+                    const paidAtDate = new Date(payment.paidAt);
+                    const overdueMonthsPaid = getOverdueMonths(payment.date, paidAtDate);
+                    
+                    if (overdueMonthsPaid > 0) { // Solo si se pagó después de un mes completo de mora
+                        penaltyAmount = payment.amount * MORA_RATE * overdueMonthsPaid;
+                        finalAmount = payment.amount + penaltyAmount;
+                        isPenaltyApplied = true; // Indica que se pagó una mora
+                    }
+                }
+                
+                // Redondear consistentemente
+                penaltyAmount = round2(penaltyAmount);
+                finalAmount = round2(finalAmount);
+
 
                 rows.push({
                     ...debt,
                     originalDebtId: debt.id,
                     paymentId: payment.id,
-                    amount: finalAmount,
-                    originalAmount: payment.amount,
+                    amount: finalAmount, // Monto Total Pagado (Base + Mora)
+                    originalAmount: payment.amount, // Monto base de la cuota
                     penaltyAmount: penaltyAmount,
                     isPenaltyApplied: isPenaltyApplied,
                     dueDate: payment.date,
@@ -232,7 +280,12 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                   // Aplicar Mora Acumulativa al resumen
                   if (daysDiff < 0) {
                       const overdueMonths = getOverdueMonths(p.date, today);
-                      amount += p.amount * MORA_RATE * overdueMonths;
+                      
+                      if (overdueMonths > 0) { // Solo si ha pasado un mes completo
+                          let penalty = p.amount * MORA_RATE * overdueMonths;
+                          penalty = round2(penalty); // Redondear mora
+                          amount = round2(amount + penalty);
+                      }
                   }
                   relevantPending.push({ ...p, amount, daysUntilDue: daysDiff });
               }
@@ -241,7 +294,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
       const total = relevantPending.reduce((sum, item) => sum + item.amount, 0);
       return {
-          totalToPay: total.toFixed(2),
+          totalToPay: round2(total).toFixed(2),
           pendingInstallments: relevantPending.length,
           upcomingPaymentsCount: relevantPending.filter(p => p.daysUntilDue >= 0 && p.daysUntilDue <= 7).length
       };
@@ -362,10 +415,19 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                         {item.isPenaltyApplied ? (
                             <div className="flex flex-col items-end">
                                 <span>S/ {item.amount.toFixed(2)}</span>
-                                <div className="flex items-center gap-1 bg-white text-red-700 px-2 py-0.5 rounded text-[10px] font-bold shadow-sm mt-1">
-                                    <span className="line-through opacity-75">S/ {item.originalAmount.toFixed(2)}</span>
-                                    <span>+{((item.penaltyAmount / item.originalAmount) * 100).toFixed(0)}% MORA</span>
-                                </div>
+                                {/* Si tiene mora, mostramos el detalle */}
+                                {item.penaltyAmount > 0 && (
+                                    <div className="flex items-center gap-1 bg-white text-red-700 px-2 py-0.5 rounded text-[10px] font-bold shadow-sm mt-1">
+                                        {item.isPaid ? (
+                                            <span>+S/ {item.penaltyAmount.toFixed(2)} Mora</span>
+                                        ) : (
+                                            <>
+                                                <span className="line-through opacity-75">S/ {item.originalAmount.toFixed(2)}</span>
+                                                <span>+{((item.penaltyAmount / item.originalAmount) * 100).toFixed(0)}% MORA</span>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <span>S/ {item.amount.toFixed(2)}</span>
