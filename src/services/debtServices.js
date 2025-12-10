@@ -140,7 +140,8 @@ export const createDebt = async (debtData) => {
 
     const payments = [];
     for (let idx = 0; idx < debtData.installments; idx++) {
-      const date = addMonths(new Date(debtData.startDate + 'T00:00:00'), idx + 1);
+      // ✅ CORRECCIÓN: Cambiado de 'idx + 1' a 'idx'
+      const date = addMonths(new Date(debtData.startDate + 'T00:00:00'), idx); 
       payments.push({
         debt_id: newDebt.id, date: date.toISOString().split('T')[0],
         amount: debtData.cuota, paid: false
@@ -233,7 +234,8 @@ export const updateDebtWithPayments = async (debtId, updates) => {
 
     const newPayments = [];
     for (let idx = 0; idx < installmentsNumerica; idx++) {
-      const date = addMonths(new Date(updates.startDate + 'T00:00:00'), idx + 1);
+      // ✅ CORRECCIÓN: Cambiado de 'idx + 1' a 'idx'
+      const date = addMonths(new Date(updates.startDate + 'T00:00:00'), idx); 
       newPayments.push({
         debt_id: debtId, date: date.toISOString().split('T')[0],
         amount: cuotaNumerica, paid: false, paid_at: null

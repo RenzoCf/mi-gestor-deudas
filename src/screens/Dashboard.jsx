@@ -7,8 +7,9 @@ import PaymentModal from "../components/dashboard/PaymentModal.jsx";
 import ReceiptModal from "../components/dashboard/ReceiptModal.jsx";
 import { useAuth } from "../context/AuthContext";
 import { uploadReceipt, markPaymentAsPaid } from "../services/debtServices";
-// Asegúrate de que este archivo exista en src/services/pushService.js
 import { registerPushNotification } from "../services/pushService"; 
+
+const MORA_RATE = 0.01; // 1% de mora fija y universal
 
 function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
   const { user } = useAuth();
@@ -17,11 +18,6 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingDebt, setEditingDebt] = useState(null);
   const [notifications, setNotifications] = useState([]);
-  
-  // ESTADO DE PERMISOS DE NOTIFICACIÓN
-  // 'default' = No ha decidido (Mostrar botón activar)
-  // 'granted' = Activado (No mostrar botón o mostrar check)
-  // 'denied'  = Bloqueado (Mostrar botón rojo de ayuda)
   const [permStatus, setPermStatus] = useState(Notification.permission);
 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -30,46 +26,24 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
   const navigate = useNavigate();
 
-  // --- 1. VERIFICAR ESTADO AL CARGAR ---
   useEffect(() => {
-    if ('Notification' in window) {
-      setPermStatus(Notification.permission);
-    }
+    if ('Notification' in window) setPermStatus(Notification.permission);
   }, []);
 
-  // --- MANEJADOR INTELIGENTE DE PERMISOS ---
   const handlePushClick = async () => {
     if (!user) return;
-
     if (permStatus === 'denied') {
-      alert(
-        "🚫 LAS NOTIFICACIONES ESTÁN BLOQUEADAS\n\n" +
-        "Para activarlas:\n" +
-        "1. Haz clic en el ícono del candado 🔒 o configuración a la izquierda de la URL.\n" +
-        "2. Busca 'Notificaciones' y selecciona 'Permitir'.\n" +
-        "3. Recarga la página."
-      );
+      alert("🚫 Las notificaciones están bloqueadas. Actívalas en el candado de la URL.");
       return;
     }
-
-    // Si es 'default' o cualquier otro, intentamos pedir permiso
     const permission = await Notification.requestPermission();
     setPermStatus(permission);
-
     if (permission === 'granted') {
-      const success = await registerPushNotification(user.id);
-      if (success) {
-        alert("✅ ¡Listo! Recibirás avisos de tus vencimientos.");
-      } else {
-        alert("⚠️ Permiso concedido, pero hubo un error registrando el dispositivo.");
-      }
-    } else {
-      // Si el usuario le dio a "Bloquear" en el popup
-      alert("⚠️ Has denegado el permiso. No recibirás recordatorios.");
+      await registerPushNotification(user.id);
+      alert("✅ ¡Avisos activados!");
     }
   };
 
-  // --- 2. CÁLCULOS AUXILIARES ---
   const getDaysUntilDue = (paymentDate) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -83,12 +57,34 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     if (!debt.payments || debt.payments.length === 0) return [];
     return debt.payments.filter(p => Math.abs(p.amount - debt.cuota) < 0.01);
   };
+  
+  // FUNCIÓN CLAVE: CALCULA CUÁNTOS MESES ESTÁ VENCIDA
+  const getOverdueMonths = (paymentDateStr, todayDate) => {
+      const dueDate = new Date(paymentDateStr + "T00:00:00");
+      
+      // Si no está vencida, el multiplicador es 0
+      if (todayDate <= dueDate) return 0;
 
-  // --- 3. NOTIFICACIONES INTERNAS ---
+      let months = (todayDate.getFullYear() - dueDate.getFullYear()) * 12;
+      months += todayDate.getMonth() - dueDate.getMonth();
+
+      // Si el día de hoy es menor que el día de vencimiento,
+      // la penalidad del mes en curso aún no se cumple completamente
+      if (todayDate.getDate() < dueDate.getDate()) {
+          months--;
+      }
+      
+      // Aseguramos un mínimo de 1 mes si daysDiff < 0 es verdad (ya pasó el primer día)
+      return Math.max(1, months); 
+  };
+  // FIN FUNCIÓN CLAVE
+
   useEffect(() => {
     const checkNotifications = () => {
       if (!debts.length) return;
       const newNotifications = [];
+
+      const today = new Date(); // Usar today para el cálculo de mora
 
       debts.forEach(debt => {
         const validPayments = getValidPayments(debt);
@@ -96,24 +92,24 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
         if (nextUnpaid) {
           const days = getDaysUntilDue(nextUnpaid.date);
-          
           let amountToShow = nextUnpaid.amount;
           let moraText = "";
           
-          if (days < 0 && debt.lateFee > 0) {
-             const penalty = (nextUnpaid.amount * debt.lateFee) / 100;
+          if (days < 0) {
+             const overdueMonths = getOverdueMonths(nextUnpaid.date, today);
+             const penalty = nextUnpaid.amount * MORA_RATE * overdueMonths;
              amountToShow += penalty;
              moraText = ` (Incl. mora S/ ${penalty.toFixed(2)})`;
           }
 
-          const exactMessage = `Monto a pagar de ${debt.name} (${debt.lender}): S/ ${amountToShow.toFixed(2)}${moraText}`;
+          const exactMessage = `Monto: S/ ${amountToShow.toFixed(2)}${moraText}`;
 
           if (days === 0) {
             newNotifications.push({ type: 'today', icon: '🚨', message: `¡HOY VENCE! ${exactMessage}` });
           } else if ([7, 4, 1].includes(days)) {
-            newNotifications.push({ type: 'upcoming', icon: '📅', message: `Recordatorio (${days} días restantes): ${exactMessage}` });
+            newNotifications.push({ type: 'upcoming', icon: '📅', message: `Vence en ${days} días: ${exactMessage}` });
           } else if (days < 0) {
-             newNotifications.push({ type: 'overdue', icon: '⚠️', message: `VENCIDO hace ${Math.abs(days)} días: ${exactMessage}` });
+             newNotifications.push({ type: 'overdue', icon: '⚠️', message: `VENCIDO (${Math.abs(days)} días): ${exactMessage}` });
           }
         }
       });
@@ -124,7 +120,6 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     return () => clearInterval(interval);
   }, [debts]);
 
-  // --- 4. MANEJO DE PAGOS ---
   const handleInitiatePayment = (debtId, paymentId, amount, lender) => {
     setPaymentData({ debtId, paymentId, amount, lender });
     setIsPaymentModalOpen(true);
@@ -136,11 +131,8 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
         receiptUrl = await uploadReceipt(file, user.id);
     }
     const result = await markPaymentAsPaid(paymentId, method, receiptUrl);
-    if (result.success) {
-        window.location.reload(); 
-    } else {
-        alert("Error al guardar el pago: " + result.error);
-    }
+    if (result.success) window.location.reload();
+    else alert("Error: " + result.error);
   };
 
   const handleShowReceipt = (item) => {
@@ -160,6 +152,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     setEditingDebt(null); setIsAddModalOpen(false);
   };
 
+  // --- FILTRADO Y CÁLCULO DE MORA (TABLA) ---
   const filteredDebts = useMemo(() => {
     const today = new Date();
     const currentYear = today.getFullYear();
@@ -178,14 +171,10 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
             const isPast = (pYear < currentYear) || (pYear === currentYear && pMonth < currentMonth);
 
             let shouldShow = false;
-
             if (showPaidDebts) {
                 shouldShow = isPaid; 
             } else {
-                if (!isPaid) {
-                    if (isCurrentMonth) shouldShow = true;
-                    if (isPast) shouldShow = true;
-                }
+                if (!isPaid && (isCurrentMonth || isPast)) shouldShow = true;
             }
 
             if (shouldShow) {
@@ -193,8 +182,10 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                 let finalAmount = payment.amount;
                 let isPenaltyApplied = false;
 
-                if (daysDiff < 0 && !isPaid && (debt.lateFee > 0)) {
-                    penaltyAmount = (payment.amount * debt.lateFee) / 100;
+                // CÁLCULO DE MORA ACUMULATIVA
+                if (daysDiff < 0 && !isPaid) {
+                    const overdueMonths = getOverdueMonths(payment.date, today);
+                    penaltyAmount = payment.amount * MORA_RATE * overdueMonths;
                     finalAmount = payment.amount + penaltyAmount;
                     isPenaltyApplied = true;
                 }
@@ -237,8 +228,11 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
               if (isCurrentMonth || isPast) {
                   let amount = p.amount;
                   const daysDiff = getDaysUntilDue(p.date);
-                  if (daysDiff < 0 && debt.lateFee > 0) {
-                      amount += (p.amount * debt.lateFee) / 100;
+                  
+                  // Aplicar Mora Acumulativa al resumen
+                  if (daysDiff < 0) {
+                      const overdueMonths = getOverdueMonths(p.date, today);
+                      amount += p.amount * MORA_RATE * overdueMonths;
                   }
                   relevantPending.push({ ...p, amount, daysUntilDue: daysDiff });
               }
@@ -257,34 +251,22 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     <div className="flex-1 p-8 bg-gray-50 overflow-y-auto">
       <header className="flex justify-between items-center mb-8">
         <h2 className="text-2xl font-bold text-gray-800">Panel de Control</h2>
-        
         <div className="flex items-center gap-4">
-            {/* --- BOTÓN DE ESTADO DE NOTIFICACIONES --- */}
             {permStatus === 'default' && (
-                <button 
-                    onClick={handlePushClick}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold hover:bg-indigo-200 transition animate-pulse"
-                >
+                <button onClick={handlePushClick} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-full text-xs font-bold hover:bg-indigo-700 transition animate-pulse shadow-lg">
                     <span>🔔 Activar Avisos</span>
                 </button>
             )}
-
             {permStatus === 'denied' && (
-                <button 
-                    onClick={handlePushClick}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-red-100 text-red-700 rounded-full text-xs font-bold hover:bg-red-200 transition"
-                    title="Las notificaciones están bloqueadas en tu navegador"
-                >
+                <button onClick={handlePushClick} className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-full text-xs font-bold hover:bg-red-700 transition shadow-md">
                     <span>🔕 Desbloquear</span>
                 </button>
             )}
-
             {permStatus === 'granted' && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-xs font-bold border border-green-100">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-full text-xs font-bold shadow-md">
                     <span>✅ Avisos Activos</span>
                 </div>
             )}
-            
             <NotificationCenter notifications={notifications} />
         </div>
       </header>
@@ -293,25 +275,24 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
       <section className="mt-10">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-xl font-semibold text-gray-700">
-            {showPaidDebts ? "📜 Historial de Pagos" : "🔥 Pagos Pendientes (Este mes + Vencidos)"}
+          <h3 className="text-xl font-bold text-gray-800 uppercase tracking-wide">
+            {showPaidDebts ? "📜 Historial" : "🔥 Deudas Pendientes"}
           </h3>
           <div className="flex gap-2">
             <button
               onClick={() => setShowPaidDebts(!showPaidDebts)}
-              className={`px-4 py-2 border rounded-md text-sm font-bold transition flex items-center gap-2 ${
+              className={`px-4 py-2 border-2 rounded-lg text-sm font-bold transition flex items-center gap-2 shadow-sm ${
                 showPaidDebts 
-                  ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
+                  ? "bg-indigo-600 text-white border-indigo-600"
                   : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
               }`}
             >
-              {showPaidDebts ? "⬅️ Ver Pendientes" : "📜 Ver Historial Pagados"}
+              {showPaidDebts ? "⬅️ Ver Pendientes" : "📜 Ver Historial"}
             </button>
-
             {!showPaidDebts && (
                 <button
                 onClick={() => { setEditingDebt(null); setIsAddModalOpen(true); }}
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-semibold shadow-sm transition"
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow-md transition transform hover:scale-105"
                 >
                 + Nueva Deuda
                 </button>
@@ -319,23 +300,21 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black ring-opacity-5">
-          <table className="w-full bg-white">
-            <thead className="bg-gray-100 text-gray-700">
+        <div className="overflow-hidden rounded-xl shadow-xl ring-1 ring-black ring-opacity-5">
+          <table className="w-full bg-white border-collapse">
+            <thead className="bg-gray-900 text-white">
               <tr>
-                <th className="py-3 px-4 text-left font-medium uppercase text-xs">Deuda</th>
-                <th className="py-3 px-4 text-center font-medium uppercase text-xs">Vencimiento</th>
-                <th className="py-3 px-4 text-right font-medium uppercase text-xs">Monto</th>
-                <th className="py-3 px-4 text-center font-medium uppercase text-xs">Estado</th>
-                <th className="py-3 px-4 text-center font-medium uppercase text-xs">Acción</th>
+                <th className="py-4 px-6 text-left font-extrabold uppercase text-xs tracking-wider">Deuda</th>
+                <th className="py-4 px-6 text-center font-extrabold uppercase text-xs tracking-wider">Vencimiento</th>
+                <th className="py-4 px-6 text-right font-extrabold uppercase text-xs tracking-wider">Monto</th>
+                <th className="py-4 px-6 text-center font-extrabold uppercase text-xs tracking-wider">Estado</th>
+                <th className="py-4 px-6 text-center font-extrabold uppercase text-xs tracking-wider">Acción</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredDebts.length === 0 ? (
-                  <tr><td colSpan="5" className="text-center py-10 text-gray-500">
-                    {showPaidDebts 
-                        ? "No tienes pagos registrados en el historial." 
-                        : "¡Todo limpio! No hay deudas pendientes este mes ni vencidas 🎉"}
+                  <tr><td colSpan="5" className="text-center py-12 text-gray-400 font-bold text-lg">
+                    {showPaidDebts ? "No tienes pagos registrados." : "¡Todo limpio! 🎉"}
                   </td></tr>
               ) : (
                 filteredDebts.map((item) => {
@@ -344,67 +323,73 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                   
                   let statusBadge = "";
                   let statusText = "";
-                  let rowClass = "hover:bg-gray-50";
+                  
+                  let rowClass = "transition-all duration-200"; 
+                  let textClass = "text-gray-900"; 
 
                   if (item.isPaid) {
-                      statusBadge = "bg-green-100 text-green-800 font-medium";
-                      statusText = "Pagado";
-                      rowClass = "bg-white opacity-75"; 
+                      rowClass = "bg-green-700 hover:bg-green-600 border-b border-green-800";
+                      textClass = "text-white"; 
+                      statusBadge = "bg-white text-green-800 font-extrabold shadow";
+                      statusText = "PAGADO";
                   } else {
                       if (item.daysUntilDue < 0) {
-                          statusBadge = "bg-red-100 text-red-800 font-bold border border-red-200";
-                          statusText = `Vencido (${Math.abs(item.daysUntilDue)}d)`;
-                          rowClass = "bg-red-50"; 
+                          rowClass = "bg-red-700 hover:bg-red-600 border-b border-red-800 animate-pulse-slow"; 
+                          textClass = "text-white"; 
+                          statusBadge = "bg-white text-red-700 font-extrabold shadow border-2 border-red-900";
+                          statusText = `VENCIDO (${Math.abs(item.daysUntilDue)}d)`;
                       } else if (item.daysUntilDue <= 7) {
-                          statusBadge = "bg-yellow-100 text-yellow-800 font-bold border border-yellow-200";
-                          statusText = item.daysUntilDue === 0 ? "¡Vence HOY!" : `${item.daysUntilDue} días`;
-                          rowClass = "bg-yellow-50";
+                          rowClass = "bg-yellow-500 hover:bg-yellow-400 border-b border-yellow-600";
+                          textClass = "text-white";
+                          statusBadge = "bg-white text-orange-600 font-extrabold shadow";
+                          statusText = item.daysUntilDue === 0 ? "¡VENCE HOY!" : `${item.daysUntilDue} DÍAS`;
                       } else {
-                          statusBadge = "bg-blue-50 text-blue-700";
-                          statusText = "Por vencer";
+                          rowClass = "bg-white hover:bg-gray-50 border-l-8 border-l-blue-500";
+                          textClass = "text-gray-900";
+                          statusBadge = "bg-blue-600 text-white font-bold border border-blue-700 shadow";
+                          statusText = "PENDIENTE";
                       }
                   }
 
                   return (
-                    <tr key={`${item.paymentId}`} className={`transition-colors duration-150 ${rowClass}`}>
-                      <td className="py-4 px-4">
-                        <div className="font-semibold text-gray-900">{item.name}</div>
-                        <div className="text-xs text-gray-500">{item.lender}</div>
+                    <tr key={`${item.paymentId}`} className={rowClass}>
+                      <td className="py-5 px-6">
+                        <div className={`font-black text-base tracking-tight ${textClass}`}>{item.name}</div>
+                        <div className={`text-xs font-bold uppercase tracking-widest ${textClass} opacity-80`}>{item.lender}</div>
                       </td>
-                      <td className="py-4 px-4 text-center text-sm text-gray-700">{dateStr}</td>
-                      <td className="py-4 px-4 text-right font-bold text-gray-800">
+                      <td className={`py-5 px-6 text-center text-sm font-bold ${textClass}`}>{dateStr}</td>
+                      <td className={`py-5 px-6 text-right font-extrabold text-xl ${textClass}`}>
                         {item.isPenaltyApplied ? (
                             <div className="flex flex-col items-end">
-                                <span className="text-red-600 text-lg">S/ {item.amount.toFixed(2)}</span>
-                                <div className="flex items-center gap-1 opacity-75">
-                                    <span className="text-[10px] text-gray-500 line-through">S/ {item.originalAmount.toFixed(2)}</span>
-                                    <span className="text-[9px] text-red-600 bg-red-100 px-1 py-0.5 rounded font-bold">+{item.penaltyAmount.toFixed(2)} MORA</span>
+                                <span>S/ {item.amount.toFixed(2)}</span>
+                                <div className="flex items-center gap-1 bg-white text-red-700 px-2 py-0.5 rounded text-[10px] font-bold shadow-sm mt-1">
+                                    <span className="line-through opacity-75">S/ {item.originalAmount.toFixed(2)}</span>
+                                    <span>+{((item.penaltyAmount / item.originalAmount) * 100).toFixed(0)}% MORA</span>
                                 </div>
                             </div>
                         ) : (
                             <span>S/ {item.amount.toFixed(2)}</span>
                         )}
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <span className={`px-3 py-1 rounded-full text-xs ${statusBadge}`}>{statusText}</span>
+                      <td className="py-5 px-6 text-center">
+                        <span className={`px-4 py-1.5 rounded-full text-xs tracking-wide ${statusBadge}`}>{statusText}</span>
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                      <td className="py-5 px-6 text-center">
+                        <div className="flex items-center justify-center gap-3">
                             {!item.isPaid ? (
                                 <>
                                 <button
                                   onClick={() => handleInitiatePayment(item.originalDebtId, item.paymentId, item.amount, item.lender)}
-                                  className="p-1.5 text-green-600 border border-green-200 bg-white rounded hover:bg-green-50 font-bold flex items-center gap-1 shadow-sm"
-                                  title="Pagar ahora"
+                                  className="px-4 py-2 bg-white text-gray-900 rounded-lg hover:bg-gray-100 font-bold flex items-center gap-2 shadow-lg transform hover:-translate-y-0.5 transition"
                                 >
-                                  💳 Pagar
+                                  💳 PAGAR
                                 </button>
                                 <button 
                                     onClick={() => {
                                         const original = debts.find(d => d.id === item.originalDebtId);
                                         setEditingDebt(original); setIsAddModalOpen(true);
                                     }}
-                                    className="p-1.5 text-gray-400 hover:text-gray-600"
+                                    className={`p-2 rounded-full transition ${textClass} hover:bg-white/20`}
                                 >
                                     ✏️
                                 </button>
@@ -412,9 +397,9 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                             ) : (
                                 <button 
                                     onClick={() => handleShowReceipt(item)}
-                                    className="text-indigo-600 border border-indigo-200 px-3 py-1 rounded text-xs hover:bg-indigo-50 flex items-center gap-1 font-medium"
+                                    className="bg-white text-green-800 border-2 border-white px-4 py-1.5 rounded-lg text-xs hover:bg-green-50 font-bold shadow-sm"
                                 >
-                                    📄 Ver Boleta
+                                    📄 RECIBO
                                 </button>
                             )}
                         </div>

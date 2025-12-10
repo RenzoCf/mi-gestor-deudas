@@ -9,7 +9,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     interestPeriod: "monthly",
     installments: "",
     startDate: "",
-    lateFee: "", // <--- Nuevo estado para la mora
+    // lateFee ha sido eliminado de aquí, ya no se configura por deuda.
   });
 
   const [calculatedData, setCalculatedData] = useState({
@@ -31,7 +31,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
         interestPeriod: initialData.interestPeriod || "monthly",
         installments: (initialData.installments || "").toString(),
         startDate: initialData.startDate || "",
-        lateFee: (initialData.lateFee || "").toString(), // <--- Cargar mora al editar
+        // lateFee ya no se carga ni se limpia.
       });
     }
   }, [isEditing, initialData]);
@@ -46,7 +46,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
         interestPeriod: "monthly",
         installments: "",
         startDate: "",
-        lateFee: "", // <--- Limpiar mora
+        // lateFee ya no se limpia.
       });
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
       setError("");
@@ -121,7 +121,8 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     const principal = parseFloat(formData.principal);
     const installments = formData.interestPeriod === 'unique' ? 1 : parseInt(formData.installments);
     const interestRate = parseFloat(formData.interestRate || 0);
-    const lateFee = parseFloat(formData.lateFee || 0); // <--- Capturar mora
+    // lateFee ya no se captura, pero lo enviamos como 0 al servicio por si el schema DB lo necesita.
+    const lateFee = 0; 
 
     if (principal <= 0) { setError("El monto debe ser positivo"); return; }
     if (installments <= 0) { setError("Cuotas inválidas"); return; }
@@ -137,7 +138,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
       interestRate: interestRate,
       interestPeriod: formData.interestPeriod,
       totalInterest: Math.round(calculatedData.totalInterest * 100) / 100,
-      lateFee: lateFee, // <--- Enviar mora al padre
+      lateFee: lateFee, // <--- Enviamos 0 fijo
     };
 
     onAddDebt(debtData);
@@ -259,18 +260,9 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                         </div>
                     </div>
 
-                    {/* --- AQUÍ ESTÁ EL CAMPO NUEVO DE MORA --- */}
-                    <div>
-                        <label className="block text-[10px] font-bold text-red-500 uppercase mb-1 ml-1">Mora por Retraso (%)</label>
-                        <div className="relative">
-                            <input
-                                type="number" step="0.1" min="0" placeholder="0%"
-                                value={formData.lateFee} onChange={(e) => setFormData({ ...formData, lateFee: e.target.value })}
-                                className="w-full px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg focus:ring-2 focus:ring-red-500 text-slate-700 outline-none font-bold placeholder-red-200"
-                            />
-                            <span className="absolute right-3 top-2.5 text-red-300 text-xs font-bold">% sobre cuota</span>
-                        </div>
-                        <p className="text-[9px] text-red-400 mt-1 ml-1">* Se aplicará si la fecha vence y no se ha pagado.</p>
+                    {/* --- NOTIFICACIÓN DE MORA FIJA --- */}
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-xs font-semibold">
+                        ⚠️ La Mora por Retraso es fija: **1% mensual** sobre la cuota.
                     </div>
 
                     {formData.interestPeriod !== 'unique' && (
