@@ -84,12 +84,18 @@ export const calculateAmortizationSchedule = (principal, annualRate, installment
 
 // --- SERVICIOS DE BASE DE DATOS ---
 
-// 1. Obtener todas las deudas del usuario con sus pagos
+// 1. Obtener todas las deudas del usuario con sus pagos (CON PROTECCIÓN ANTI-FANTASMA)
 export const getUserDebts = async () => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
     
-    if (!user) throw new Error('Usuario no autenticado');
+    // 🔥 CORRECCIÓN: Si el usuario no existe o hay error de auth, cerramos sesión
+    if (authError || !user) {
+      console.warn("⚠️ Sesión inválida detectada. Cerrando sesión...");
+      await supabase.auth.signOut(); // Limpia el token corrupto
+      window.location.href = '/auth'; // Redirige al login
+      return { success: false, error: 'Sesión expirada' };
+    }
 
     const { data: debts, error: debtsError } = await supabase
       .from('debts')
@@ -213,7 +219,7 @@ export const createDebt = async (debtData) => {
   }
 };
 
-// 3. NUEVO: Subir voucher/foto a Supabase Storage
+// 3. Subir voucher/foto a Supabase Storage
 export const uploadReceipt = async (file, userId) => {
   try {
     const fileExt = file.name.split('.').pop();
@@ -239,7 +245,7 @@ export const uploadReceipt = async (file, userId) => {
   }
 };
 
-// 4. ACTUALIZADO: Marcar pago con método y recibo
+// 4. Marcar pago con método y recibo
 export const markPaymentAsPaid = async (paymentId, method, receiptUrl = null) => {
   try {
     const { data, error } = await supabase
