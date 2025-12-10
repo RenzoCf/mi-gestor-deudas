@@ -1,7 +1,7 @@
 // src/context/AuthContext.jsx
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../supabaseClient.js'; // Verifica que la ruta a tu cliente sea correcta
 
 const AuthContext = createContext();
 
@@ -17,11 +17,13 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
-  // Recuperar sesión al iniciar y escuchar cambios
+  // 1. Recuperar sesión al cargar la app y escuchar cambios
   useEffect(() => {
     const getSession = async () => {
       const { data, error } = await supabase.auth.getSession();
-      if (error) console.error('Error obteniendo sesión:', error);
+      if (error) {
+        console.error('Error obteniendo sesión:', error);
+      }
       setUser(data.session?.user ?? null);
       setLoading(false);
     };
@@ -30,12 +32,16 @@ export const AuthProvider = ({ children }) => {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      // Opcional: Si la sesión expira o cambia, podrías redirigir aquí
+      if (_event === 'SIGNED_OUT') {
+        setLoading(false);
+      }
     });
 
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // Login con Supabase
+  // 2. Login con Supabase
   const login = async (email, password) => {
     setLoading(true);
     setError(null);
@@ -50,19 +56,19 @@ export const AuthProvider = ({ children }) => {
 
       console.log('✅ Login exitoso:', data.user.email);
       setUser(data.user);
-      setLoading(false);
-      navigate('/dashboard');
+      navigate('/dashboard'); // Redirige al dashboard tras login
       return { success: true };
 
     } catch (error) {
       console.error('❌ Error en login:', error.message);
-      setError(error.message);
-      setLoading(false);
+      setError(error.message); // Muestra mensaje legible al usuario
       return { success: false, error };
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Registro con Supabase
+  // 3. Registro con Supabase (VERSIÓN CORREGIDA Y ROBUSTA)
   const register = async (email, password, username) => {
     setLoading(true);
     setError(null);
@@ -70,13 +76,14 @@ export const AuthProvider = ({ children }) => {
     try {
       console.log('📝 Iniciando registro para:', email);
 
-      // 1. Registrar usuario en Supabase Auth
+      // A. Crear usuario en Auth (y guardar metadata básica)
       const { data: authData, error: authError } = await supabase.auth.signUp({ 
         email, 
         password,
         options: {
           data: {
-            username: username
+            username: username, // Guardamos esto en auth.users por seguridad
+            full_name: username
           },
           emailRedirectTo: window.location.origin + '/dashboard'
         }
@@ -85,65 +92,69 @@ export const AuthProvider = ({ children }) => {
       if (authError) throw authError;
 
       if (!authData.user) {
-        throw new Error('No se pudo crear el usuario');
+        throw new Error('No se pudo crear el usuario en Auth.');
       }
 
-      console.log('✅ Usuario creado en auth:', authData.user.id);
+      console.log('✅ Usuario Auth creado ID:', authData.user.id);
 
-      // 2. CRÍTICO: Verificar si la sesión está activa
-      if (authData.session) {
-        console.log('✅ Sesión activa, creando perfil...');
-        
-        // 3. Crear perfil con la sesión autenticada
-        if (username) {
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .insert({
-              id: authData.user.id,
-              username: username
-            });
-
-          if (profileError) {
-            console.error('❌ Error creando perfil:', profileError);
-          } else {
-            console.log('✅ Perfil creado exitosamente');
-          }
-        }
-
-        // Usuario autenticado, ir al dashboard
-        setUser(authData.user);
-        setLoading(false);
-        navigate('/dashboard');
-        return { success: true };
-      } else {
-        // No hay sesión (confirmación de email requerida)
-        console.log('⚠️ Confirmación de email requerida');
-        alert('Por favor revisa tu email y confirma tu cuenta. Luego podrás iniciar sesión.');
+      // B. Verificar si hay sesión activa (si no, es porque requiere confirmar email)
+      if (!authData.session) {
+        console.log('⚠️ Confirmación de email requerida por Supabase');
         setLoading(false);
         return { 
           success: true, 
-          message: 'Revisa tu email para confirmar tu cuenta',
+          message: 'Revisa tu email para confirmar tu cuenta.',
           needsConfirmation: true
         };
       }
 
+      // C. Crear registro en la tabla 'profiles' (Solo si hay sesión)
+      // Usamos 'upsert' en lugar de 'insert' para evitar errores si el usuario ya se creó parcialmente
+      if (username) {
+        const { error: profileError } = await supabase
+          .from('profiles') // Asegúrate que tu tabla se llama 'profiles' o 'usuarios'
+          .upsert({
+            id: authData.user.id,
+            username: username,
+            // Agrega aquí otros campos si tu tabla los requiere
+            // created_at: new Date() // Supabase suele poner esto automático
+          }, { onConflict: 'id' }); // Si el ID ya existe, actualiza en vez de fallar
+
+        if (profileError) {
+          // Si falla el perfil, no bloqueamos todo, pero lo avisamos en consola
+          console.error('⚠️ Usuario creado, pero error al guardar perfil:', profileError.message);
+        } else {
+          console.log('✅ Perfil guardado en base de datos pública');
+        }
+      }
+
+      // D. Todo listo, actualizar estado y redirigir
+      setUser(authData.user);
+      navigate('/dashboard');
+      return { success: true };
+
     } catch (error) {
-      console.error('❌ Error en registro:', error.message);
+      console.error('❌ Error fatal en registro:', error.message);
       setError(error.message);
-      setLoading(false);
       return { success: false, error };
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Logout
+  // 4. Logout
   const logout = async () => {
+    setLoading(true);
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
       setUser(null);
-      navigate('/auth');
+      navigate('/auth'); // Te manda al login
       console.log('✅ Logout exitoso');
     } catch (error) {
-      console.error('❌ Error en logout:', error);
+      console.error('❌ Error en logout:', error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -160,7 +171,7 @@ export const AuthProvider = ({ children }) => {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
-// Componente para proteger rutas
+// Componente Wrapper para proteger rutas
 export const RequireAuth = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
@@ -173,13 +184,8 @@ export const RequireAuth = ({ children }) => {
 
   if (loading) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh' 
-      }}>
-        <div>Cargando...</div>
+      <div className="flex justify-center items-center h-screen bg-slate-900 text-white">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
       </div>
     );
   }
