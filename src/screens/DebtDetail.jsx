@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AddDebtModal from "../components/dashboard/AddDebtModal";
-// IMPORTAMOS LOS NUEVOS COMPONENTES Y SERVICIOS
 import PaymentModal from "../components/dashboard/PaymentModal";
 import ReceiptModal from "../components/dashboard/ReceiptModal";
 import { useAuth } from "../context/AuthContext";
@@ -12,12 +11,10 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
   const { debtId } = useParams();
   const navigate = useNavigate();
   
-  // Estados para edición y borrado
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Estados para PAGOS y RECIBOS (Igual que en Dashboard)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentData, setPaymentData] = useState(null);
   const [receiptData, setReceiptData] = useState(null);
@@ -37,7 +34,7 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
     );
   }
 
-  // --- CÁLCULOS (Igual que antes) ---
+  // --- CÁLCULOS ---
   const getDaysUntilDue = (dateStr) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -101,13 +98,12 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
   const totalInstallments = debt.installments || 0;
   const progressPercentage = totalInstallments > 0 ? (paidInstallments / totalInstallments) * 100 : 0;
 
-  // --- LÓGICA DE PAGO (NUEVA: IGUAL QUE DASHBOARD) ---
-  
+  // --- LÓGICA DE PAGO ---
   const handleInitiatePayment = (paymentId, amount) => {
     setPaymentData({ 
         debtId: debt.id, 
         paymentId, 
-        amount, 
+        amount, // Monto calculado (puede incluir mora)
         lender: debt.lender 
     });
     setIsPaymentModalOpen(true);
@@ -116,7 +112,6 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
   const handleConfirmPayment = async (debtId, paymentId, method, file) => {
     let receiptUrl = null;
     if (method === 'cash' && file) {
-        console.log("Subiendo voucher desde detalle...");
         receiptUrl = await uploadReceipt(file, user.id);
     }
     const result = await markPaymentAsPaid(paymentId, method, receiptUrl);
@@ -138,7 +133,6 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
     });
   };
 
-  // Otros manejadores
   const handleEdit = (editedDebt) => {
     onEditDebt(debt.id, editedDebt);
     setIsEditModalOpen(false);
@@ -157,6 +151,11 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
         <div>
           <h2 className="text-3xl font-bold text-gray-800">Detalle de Deuda</h2>
           <p className="text-gray-500 mt-1">{debt.name} - {debt.lender}</p>
+          {debt.lateFee > 0 && (
+             <span className="text-xs text-red-600 font-bold bg-red-50 px-2 py-1 rounded mt-1 inline-block">
+                Tasa Mora: {debt.lateFee}%
+             </span>
+          )}
         </div>
         <div className="flex gap-2">
           <button onClick={() => navigate(-1)} className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">← Volver</button>
@@ -221,11 +220,15 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
                   
                   const amortRow = amortizationSchedule[idx] || { capital: 0, interes: 0 };
                   
-                  // COLORES (Igual que Dashboard)
                   const daysUntilDue = getDaysUntilDue(payment.date);
                   let rowClass = "hover:bg-gray-50";
                   let badgeClass = "bg-gray-100 text-gray-600";
                   let statusText = "Pendiente";
+
+                  // --- CÁLCULO DE MORA LOCAL ---
+                  let finalAmount = payment.amount;
+                  let penaltyAmount = 0;
+                  let hasPenalty = false;
 
                   if (payment.paid) {
                     rowClass = "bg-green-50 hover:bg-green-100";
@@ -236,6 +239,14 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
                       rowClass = "bg-red-50 hover:bg-red-100";
                       badgeClass = "bg-red-100 text-red-800 font-bold border border-red-200 animate-pulse";
                       statusText = "Vencido";
+                      
+                      // Calcular mora si existe
+                      if (debt.lateFee > 0) {
+                          penaltyAmount = (payment.amount * debt.lateFee) / 100;
+                          finalAmount = payment.amount + penaltyAmount;
+                          hasPenalty = true;
+                      }
+
                     } else if (daysUntilDue <= 7) {
                       rowClass = "bg-yellow-50 hover:bg-yellow-100";
                       badgeClass = "bg-yellow-100 text-yellow-800 font-bold border border-yellow-200";
@@ -254,7 +265,20 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
                         {dueDateStr}
                         {statusText === "Vencido" && <span className="ml-2">⚠️</span>}
                       </td>
-                      <td className="px-4 py-3 text-sm text-right font-bold text-gray-800">S/ {payment.amount.toFixed(2)}</td>
+                      
+                      {/* COLUMNA CUOTA CON MORA */}
+                      <td className="px-4 py-3 text-sm text-right font-bold text-gray-800">
+                        {hasPenalty ? (
+                            <div>
+                                <div className="text-red-600">S/ {finalAmount.toFixed(2)}</div>
+                                <div className="text-[9px] text-gray-500 font-normal line-through">S/ {payment.amount.toFixed(2)}</div>
+                                <div className="text-[9px] text-red-500 font-bold">+{penaltyAmount.toFixed(2)} mora</div>
+                            </div>
+                        ) : (
+                            <span>S/ {payment.amount.toFixed(2)}</span>
+                        )}
+                      </td>
+
                       <td className="px-4 py-3 text-sm text-right text-blue-600">S/ {amortRow.capital.toFixed(2)}</td>
                       <td className="px-4 py-3 text-sm text-right text-orange-600">S/ {amortRow.interes.toFixed(2)}</td>
                       <td className="px-4 py-3 text-center">
@@ -264,15 +288,14 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
                       </td>
                       <td className="px-4 py-3 text-center">
                         {!payment.paid ? (
-                          // BOTÓN PAGAR (Abre Pasarela)
                           <button
-                            onClick={() => handleInitiatePayment(payment.id, payment.amount)}
+                            // Pasamos 'finalAmount' que incluye la mora
+                            onClick={() => handleInitiatePayment(payment.id, finalAmount)}
                             className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700 shadow-sm transition font-bold"
                           >
                             💳 Pagar
                           </button>
                         ) : (
-                          // BOTÓN VER BOLETA
                           <button 
                             onClick={() => handleShowReceipt(payment)}
                             className="text-indigo-600 border border-indigo-200 px-3 py-1 rounded text-xs hover:bg-indigo-50 flex items-center gap-1 mx-auto"
@@ -301,7 +324,6 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
         isEditing={true}
       />
 
-      {/* COMPONENTE: PASARELA DE PAGO */}
       <PaymentModal 
         isOpen={isPaymentModalOpen} 
         onClose={() => setIsPaymentModalOpen(false)} 
@@ -309,7 +331,6 @@ function DebtDetail({ debts, onEditDebt, onDeleteDebt }) {
         paymentData={paymentData}
       />
 
-      {/* COMPONENTE: VISOR DE BOLETAS */}
       <ReceiptModal 
         isOpen={!!receiptData} 
         onClose={() => setReceiptData(null)} 

@@ -9,6 +9,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     interestPeriod: "monthly",
     installments: "",
     startDate: "",
+    lateFee: "", // <--- Nuevo estado para la mora
   });
 
   const [calculatedData, setCalculatedData] = useState({
@@ -30,6 +31,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
         interestPeriod: initialData.interestPeriod || "monthly",
         installments: (initialData.installments || "").toString(),
         startDate: initialData.startDate || "",
+        lateFee: (initialData.lateFee || "").toString(), // <--- Cargar mora al editar
       });
     }
   }, [isEditing, initialData]);
@@ -44,6 +46,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
         interestPeriod: "monthly",
         installments: "",
         startDate: "",
+        lateFee: "", // <--- Limpiar mora
       });
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
       setError("");
@@ -118,6 +121,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
     const principal = parseFloat(formData.principal);
     const installments = formData.interestPeriod === 'unique' ? 1 : parseInt(formData.installments);
     const interestRate = parseFloat(formData.interestRate || 0);
+    const lateFee = parseFloat(formData.lateFee || 0); // <--- Capturar mora
 
     if (principal <= 0) { setError("El monto debe ser positivo"); return; }
     if (installments <= 0) { setError("Cuotas inválidas"); return; }
@@ -133,11 +137,13 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
       interestRate: interestRate,
       interestPeriod: formData.interestPeriod,
       totalInterest: Math.round(calculatedData.totalInterest * 100) / 100,
+      lateFee: lateFee, // <--- Enviar mora al padre
     };
 
     onAddDebt(debtData);
     if (!isEditing) {
-      setFormData({ name: "", lender: "", principal: "", interestRate: "", interestPeriod: "monthly", installments: "", startDate: "" });
+      // Reset completo
+      setFormData({ name: "", lender: "", principal: "", interestRate: "", interestPeriod: "monthly", installments: "", startDate: "", lateFee: "" });
       setCalculatedData({ totalAmount: 0, cuota: 0, totalInterest: 0 });
     }
     onClose();
@@ -148,13 +154,12 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
   return (
     <div className="fixed inset-0 bg-slate-900/90 z-50 flex justify-center items-center p-4 backdrop-blur-sm transition-opacity duration-300">
       
-      {/* MODAL MÁS ANCHO Y BAJO (ESTILO DASHBOARD) */}
       <div 
         className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden relative transform transition-all scale-100 animate-fade-in-up flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         
-        {/* HEADER COMPACTO */}
+        {/* HEADER */}
         <div className="bg-slate-900 px-6 py-4 flex justify-between items-center text-white shrink-0">
             <div className="flex items-center gap-3">
                 <div className="bg-indigo-600 p-1.5 rounded-lg">
@@ -172,7 +177,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
             </button>
         </div>
 
-        {/* CUERPO EN GRILLA (SIN SCROLL) */}
+        {/* CUERPO EN GRILLA */}
         <form onSubmit={handleSubmit} className="flex flex-col md:flex-row h-full">
             
             {/* COLUMNA IZQUIERDA: DATOS BÁSICOS */}
@@ -213,7 +218,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                 </div>
             </div>
 
-            {/* COLUMNA DERECHA: CALCULADORA (FONDO AZULADO) */}
+            {/* COLUMNA DERECHA: CALCULADORA */}
             <div className="flex-1 p-6 bg-indigo-50/30 flex flex-col justify-between">
                 
                 <div className="space-y-4">
@@ -245,13 +250,27 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1 ml-1">Tasa (%)</label>
+                            <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1 ml-1">Tasa Interés (%)</label>
                             <input
                                 type="number" step="0.01" min="0" max="100" placeholder="0%"
                                 value={formData.interestRate} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })}
                                 className="w-full px-3 py-2.5 bg-white border border-indigo-100 rounded-lg focus:ring-2 focus:ring-indigo-500 text-right font-bold text-sm text-slate-700 outline-none"
                             />
                         </div>
+                    </div>
+
+                    {/* --- AQUÍ ESTÁ EL CAMPO NUEVO DE MORA --- */}
+                    <div>
+                        <label className="block text-[10px] font-bold text-red-500 uppercase mb-1 ml-1">Mora por Retraso (%)</label>
+                        <div className="relative">
+                            <input
+                                type="number" step="0.1" min="0" placeholder="0%"
+                                value={formData.lateFee} onChange={(e) => setFormData({ ...formData, lateFee: e.target.value })}
+                                className="w-full px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg focus:ring-2 focus:ring-red-500 text-slate-700 outline-none font-bold placeholder-red-200"
+                            />
+                            <span className="absolute right-3 top-2.5 text-red-300 text-xs font-bold">% sobre cuota</span>
+                        </div>
+                        <p className="text-[9px] text-red-400 mt-1 ml-1">* Se aplicará si la fecha vence y no se ha pagado.</p>
                     </div>
 
                     {formData.interestPeriod !== 'unique' && (
@@ -270,7 +289,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                     )}
                 </div>
 
-                {/* RESUMEN FINAL COMPACTO */}
+                {/* RESUMEN FINAL */}
                 <div className="mt-6 pt-4 border-t border-indigo-200">
                     <div className="flex justify-between items-end mb-1">
                         <span className="text-xs text-slate-500 font-medium">Cuota Estimada</span>
@@ -288,7 +307,7 @@ function AddDebtModal({ isOpen, onClose, onAddDebt, initialData, isEditing }) {
                         Cancelar
                     </button>
                     <button type="submit" className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-md transform active:scale-95 transition text-xs uppercase tracking-wide">
-                        {isEditing ? "Guardar" : "Crear Deuda"}
+                        {isEditing ? "Guardar Cambios" : "Crear Deuda"}
                     </button>
                 </div>
 

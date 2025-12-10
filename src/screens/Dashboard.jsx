@@ -7,26 +7,69 @@ import PaymentModal from "../components/dashboard/PaymentModal.jsx";
 import ReceiptModal from "../components/dashboard/ReceiptModal.jsx";
 import { useAuth } from "../context/AuthContext";
 import { uploadReceipt, markPaymentAsPaid } from "../services/debtServices";
+// Asegúrate de que este archivo exista en src/services/pushService.js
+import { registerPushNotification } from "../services/pushService"; 
 
 function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
   const { user } = useAuth();
   
-  // false = MODO PENDIENTES (Por defecto)
-  // true  = MODO HISTORIAL (Solo pagados)
   const [showPaidDebts, setShowPaidDebts] = useState(false);
-  
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingDebt, setEditingDebt] = useState(null);
   const [notifications, setNotifications] = useState([]);
   
-  // Estados para los modales de pago y recibo
+  // ESTADO DE PERMISOS DE NOTIFICACIÓN
+  // 'default' = No ha decidido (Mostrar botón activar)
+  // 'granted' = Activado (No mostrar botón o mostrar check)
+  // 'denied'  = Bloqueado (Mostrar botón rojo de ayuda)
+  const [permStatus, setPermStatus] = useState(Notification.permission);
+
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentData, setPaymentData] = useState(null);
   const [receiptData, setReceiptData] = useState(null);
 
   const navigate = useNavigate();
 
-  // --- 1. CÁLCULOS AUXILIARES ---
+  // --- 1. VERIFICAR ESTADO AL CARGAR ---
+  useEffect(() => {
+    if ('Notification' in window) {
+      setPermStatus(Notification.permission);
+    }
+  }, []);
+
+  // --- MANEJADOR INTELIGENTE DE PERMISOS ---
+  const handlePushClick = async () => {
+    if (!user) return;
+
+    if (permStatus === 'denied') {
+      alert(
+        "🚫 LAS NOTIFICACIONES ESTÁN BLOQUEADAS\n\n" +
+        "Para activarlas:\n" +
+        "1. Haz clic en el ícono del candado 🔒 o configuración a la izquierda de la URL.\n" +
+        "2. Busca 'Notificaciones' y selecciona 'Permitir'.\n" +
+        "3. Recarga la página."
+      );
+      return;
+    }
+
+    // Si es 'default' o cualquier otro, intentamos pedir permiso
+    const permission = await Notification.requestPermission();
+    setPermStatus(permission);
+
+    if (permission === 'granted') {
+      const success = await registerPushNotification(user.id);
+      if (success) {
+        alert("✅ ¡Listo! Recibirás avisos de tus vencimientos.");
+      } else {
+        alert("⚠️ Permiso concedido, pero hubo un error registrando el dispositivo.");
+      }
+    } else {
+      // Si el usuario le dio a "Bloquear" en el popup
+      alert("⚠️ Has denegado el permiso. No recibirás recordatorios.");
+    }
+  };
+
+  // --- 2. CÁLCULOS AUXILIARES ---
   const getDaysUntilDue = (paymentDate) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -41,7 +84,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     return debt.payments.filter(p => Math.abs(p.amount - debt.cuota) < 0.01);
   };
 
-  // --- 2. SISTEMA DE NOTIFICACIONES (LIMPIO: SOLO INTERNAS) ---
+  // --- 3. NOTIFICACIONES INTERNAS ---
   useEffect(() => {
     const checkNotifications = () => {
       if (!debts.length) return;
@@ -53,69 +96,53 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
         if (nextUnpaid) {
           const days = getDaysUntilDue(nextUnpaid.date);
-          const exactMessage = `Monto a pagar de ${debt.name} (${debt.lender}): S/ ${nextUnpaid.amount.toFixed(2)}`;
+          
+          let amountToShow = nextUnpaid.amount;
+          let moraText = "";
+          
+          if (days < 0 && debt.lateFee > 0) {
+             const penalty = (nextUnpaid.amount * debt.lateFee) / 100;
+             amountToShow += penalty;
+             moraText = ` (Incl. mora S/ ${penalty.toFixed(2)})`;
+          }
+
+          const exactMessage = `Monto a pagar de ${debt.name} (${debt.lender}): S/ ${amountToShow.toFixed(2)}${moraText}`;
 
           if (days === 0) {
-            newNotifications.push({
-              type: 'today',
-              icon: '🚨',
-              message: `¡HOY VENCE! ${exactMessage}`
-            });
-          }
-          else if ([7, 4, 1].includes(days)) {
-            newNotifications.push({
-              type: 'upcoming',
-              icon: '📅',
-              message: `Recordatorio (${days} días restantes): ${exactMessage}`
-            });
-          }
-          else if (days < 0) {
-             newNotifications.push({
-              type: 'overdue',
-              icon: '⚠️',
-              message: `VENCIDO hace ${Math.abs(days)} días: ${exactMessage}`
-            });
+            newNotifications.push({ type: 'today', icon: '🚨', message: `¡HOY VENCE! ${exactMessage}` });
+          } else if ([7, 4, 1].includes(days)) {
+            newNotifications.push({ type: 'upcoming', icon: '📅', message: `Recordatorio (${days} días restantes): ${exactMessage}` });
+          } else if (days < 0) {
+             newNotifications.push({ type: 'overdue', icon: '⚠️', message: `VENCIDO hace ${Math.abs(days)} días: ${exactMessage}` });
           }
         }
       });
       setNotifications(newNotifications);
     };
-
     checkNotifications();
     const interval = setInterval(checkNotifications, 3600000);
     return () => clearInterval(interval);
   }, [debts]);
 
-  // --- 3. MANEJO DE PAGOS REALES ---
-  
-  // Abrir la pasarela
+  // --- 4. MANEJO DE PAGOS ---
   const handleInitiatePayment = (debtId, paymentId, amount, lender) => {
     setPaymentData({ debtId, paymentId, amount, lender });
     setIsPaymentModalOpen(true);
   };
 
-  // Confirmar pago desde la pasarela (recibe archivo si es efectivo)
   const handleConfirmPayment = async (debtId, paymentId, method, file) => {
     let receiptUrl = null;
-
-    // Si es efectivo, subimos la foto
     if (method === 'cash' && file) {
-        console.log("Subiendo voucher...");
         receiptUrl = await uploadReceipt(file, user.id);
     }
-
-    // Guardar en base de datos
     const result = await markPaymentAsPaid(paymentId, method, receiptUrl);
-    
     if (result.success) {
-        // Recargar página para ver cambios (Simple y efectivo)
         window.location.reload(); 
     } else {
         alert("Error al guardar el pago: " + result.error);
     }
   };
 
-  // Ver recibo/boleta
   const handleShowReceipt = (item) => {
     setReceiptData({
         id: item.paymentId,
@@ -133,36 +160,53 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     setEditingDebt(null); setIsAddModalOpen(false);
   };
 
-  // --- 4. FILTRADO INTELIGENTE ---
   const filteredDebts = useMemo(() => {
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const currentMonth = today.getMonth();
     const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1;
 
     let rows = [];
 
     debts.forEach(debt => {
         const validPayments = getValidPayments(debt);
         validPayments.forEach(payment => {
-            const payDate = new Date(payment.date + "T00:00:00");
-            payDate.setHours(0, 0, 0, 0);
+            const [pYear, pMonth] = payment.date.split('-').map(Number);
             const isPaid = payment.paid;
             const daysDiff = getDaysUntilDue(payment.date);
 
-            const isCurrentMonth = payDate.getMonth() === currentMonth && payDate.getFullYear() === currentYear;
-            const isPast = payDate < today;
+            const isCurrentMonth = (pYear === currentYear && pMonth === currentMonth);
+            const isPast = (pYear < currentYear) || (pYear === currentYear && pMonth < currentMonth);
 
-            const shouldShow = (isCurrentMonth || (!isPaid && isPast)) || (showPaidDebts && isPaid);
+            let shouldShow = false;
+
+            if (showPaidDebts) {
+                shouldShow = isPaid; 
+            } else {
+                if (!isPaid) {
+                    if (isCurrentMonth) shouldShow = true;
+                    if (isPast) shouldShow = true;
+                }
+            }
 
             if (shouldShow) {
-                if (showPaidDebts !== isPaid) return;
+                let penaltyAmount = 0;
+                let finalAmount = payment.amount;
+                let isPenaltyApplied = false;
+
+                if (daysDiff < 0 && !isPaid && (debt.lateFee > 0)) {
+                    penaltyAmount = (payment.amount * debt.lateFee) / 100;
+                    finalAmount = payment.amount + penaltyAmount;
+                    isPenaltyApplied = true;
+                }
 
                 rows.push({
                     ...debt,
                     originalDebtId: debt.id,
                     paymentId: payment.id,
-                    amount: payment.amount,
+                    amount: finalAmount,
+                    originalAmount: payment.amount,
+                    penaltyAmount: penaltyAmount,
+                    isPenaltyApplied: isPenaltyApplied,
                     dueDate: payment.date,
                     isPaid: isPaid,
                     daysUntilDue: daysDiff,
@@ -176,37 +220,32 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     return rows.sort((a, b) => a.daysUntilDue - b.daysUntilDue);
   }, [debts, showPaidDebts]);
 
-  // --- 5. RESUMEN DE TARJETAS (Solo pendientes reales) ---
   const summaryData = useMemo(() => {
       const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const currentMonth = today.getMonth();
       const currentYear = today.getFullYear();
-      
+      const currentMonth = today.getMonth() + 1;
       let relevantPending = [];
 
       debts.forEach(debt => {
           const payments = getValidPayments(debt);
           payments.forEach(p => {
-              if (p.paid) return; // Ignorar pagados para la suma
+              if (p.paid) return;
+              const [pYear, pMonth] = p.date.split('-').map(Number);
+              const isCurrentMonth = (pYear === currentYear && pMonth === currentMonth);
+              const isPast = (pYear < currentYear) || (pYear === currentYear && pMonth < currentMonth);
 
-              const payDate = new Date(p.date + "T00:00:00");
-              payDate.setHours(0, 0, 0, 0);
-
-              const isCurrentMonth = payDate.getMonth() === currentMonth && payDate.getFullYear() === currentYear;
-              const isOverdue = payDate < today;
-
-              if (isCurrentMonth || isOverdue) {
-                  relevantPending.push({
-                      ...p,
-                      daysUntilDue: getDaysUntilDue(p.date)
-                  });
+              if (isCurrentMonth || isPast) {
+                  let amount = p.amount;
+                  const daysDiff = getDaysUntilDue(p.date);
+                  if (daysDiff < 0 && debt.lateFee > 0) {
+                      amount += (p.amount * debt.lateFee) / 100;
+                  }
+                  relevantPending.push({ ...p, amount, daysUntilDue: daysDiff });
               }
           });
       });
 
       const total = relevantPending.reduce((sum, item) => sum + item.amount, 0);
-      
       return {
           totalToPay: total.toFixed(2),
           pendingInstallments: relevantPending.length,
@@ -218,16 +257,44 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     <div className="flex-1 p-8 bg-gray-50 overflow-y-auto">
       <header className="flex justify-between items-center mb-8">
         <h2 className="text-2xl font-bold text-gray-800">Panel de Control</h2>
-        <NotificationCenter notifications={notifications} />
+        
+        <div className="flex items-center gap-4">
+            {/* --- BOTÓN DE ESTADO DE NOTIFICACIONES --- */}
+            {permStatus === 'default' && (
+                <button 
+                    onClick={handlePushClick}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold hover:bg-indigo-200 transition animate-pulse"
+                >
+                    <span>🔔 Activar Avisos</span>
+                </button>
+            )}
+
+            {permStatus === 'denied' && (
+                <button 
+                    onClick={handlePushClick}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-red-100 text-red-700 rounded-full text-xs font-bold hover:bg-red-200 transition"
+                    title="Las notificaciones están bloqueadas en tu navegador"
+                >
+                    <span>🔕 Desbloquear</span>
+                </button>
+            )}
+
+            {permStatus === 'granted' && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-xs font-bold border border-green-100">
+                    <span>✅ Avisos Activos</span>
+                </div>
+            )}
+            
+            <NotificationCenter notifications={notifications} />
+        </div>
       </header>
 
-      {/* Tarjetas de Resumen (Siempre muestran deuda real) */}
       <SummaryCards summaryData={summaryData} />
 
       <section className="mt-10">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-xl font-semibold text-gray-700">
-            {showPaidDebts ? "📜 Historial de Pagos Realizados" : "🔥 Pagos Pendientes y Por Vencer"}
+            {showPaidDebts ? "📜 Historial de Pagos" : "🔥 Pagos Pendientes (Este mes + Vencidos)"}
           </h3>
           <div className="flex gap-2">
             <button
@@ -238,7 +305,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                   : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
               }`}
             >
-              {showPaidDebts ? "⬅️ Volver a Pendientes" : "📜 Ver Historial Pagados"}
+              {showPaidDebts ? "⬅️ Ver Pendientes" : "📜 Ver Historial Pagados"}
             </button>
 
             {!showPaidDebts && (
@@ -267,8 +334,8 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
               {filteredDebts.length === 0 ? (
                   <tr><td colSpan="5" className="text-center py-10 text-gray-500">
                     {showPaidDebts 
-                        ? "No tienes pagos registrados en el historial de este mes." 
-                        : "¡Estás al día! No hay deudas pendientes por mostrar 🎉"}
+                        ? "No tienes pagos registrados en el historial." 
+                        : "¡Todo limpio! No hay deudas pendientes este mes ni vencidas 🎉"}
                   </td></tr>
               ) : (
                 filteredDebts.map((item) => {
@@ -281,8 +348,8 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
 
                   if (item.isPaid) {
                       statusBadge = "bg-green-100 text-green-800 font-medium";
-                      statusText = "Completado";
-                      rowClass = "bg-white"; 
+                      statusText = "Pagado";
+                      rowClass = "bg-white opacity-75"; 
                   } else {
                       if (item.daysUntilDue < 0) {
                           statusBadge = "bg-red-100 text-red-800 font-bold border border-red-200";
@@ -294,7 +361,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                           rowClass = "bg-yellow-50";
                       } else {
                           statusBadge = "bg-blue-50 text-blue-700";
-                          statusText = `${item.daysUntilDue} días`;
+                          statusText = "Por vencer";
                       }
                   }
 
@@ -305,7 +372,19 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                         <div className="text-xs text-gray-500">{item.lender}</div>
                       </td>
                       <td className="py-4 px-4 text-center text-sm text-gray-700">{dateStr}</td>
-                      <td className="py-4 px-4 text-right font-bold text-gray-800">S/ {item.amount.toFixed(2)}</td>
+                      <td className="py-4 px-4 text-right font-bold text-gray-800">
+                        {item.isPenaltyApplied ? (
+                            <div className="flex flex-col items-end">
+                                <span className="text-red-600 text-lg">S/ {item.amount.toFixed(2)}</span>
+                                <div className="flex items-center gap-1 opacity-75">
+                                    <span className="text-[10px] text-gray-500 line-through">S/ {item.originalAmount.toFixed(2)}</span>
+                                    <span className="text-[9px] text-red-600 bg-red-100 px-1 py-0.5 rounded font-bold">+{item.penaltyAmount.toFixed(2)} MORA</span>
+                                </div>
+                            </div>
+                        ) : (
+                            <span>S/ {item.amount.toFixed(2)}</span>
+                        )}
+                      </td>
                       <td className="py-4 px-4 text-center">
                         <span className={`px-3 py-1 rounded-full text-xs ${statusBadge}`}>{statusText}</span>
                       </td>
@@ -315,7 +394,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                                 <>
                                 <button
                                   onClick={() => handleInitiatePayment(item.originalDebtId, item.paymentId, item.amount, item.lender)}
-                                  className="p-1.5 text-green-600 border border-green-200 bg-white rounded hover:bg-green-50 font-bold flex items-center gap-1"
+                                  className="p-1.5 text-green-600 border border-green-200 bg-white rounded hover:bg-green-50 font-bold flex items-center gap-1 shadow-sm"
                                   title="Pagar ahora"
                                 >
                                   💳 Pagar
@@ -356,16 +435,12 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
         initialData={editingDebt} 
         isEditing={!!editingDebt} 
       />
-      
-      {/* COMPONENTE: PASARELA DE PAGO */}
       <PaymentModal 
         isOpen={isPaymentModalOpen} 
         onClose={() => setIsPaymentModalOpen(false)} 
         onConfirmPayment={handleConfirmPayment}
         paymentData={paymentData}
       />
-
-      {/* COMPONENTE: VISOR DE BOLETAS */}
       <ReceiptModal 
         isOpen={!!receiptData} 
         onClose={() => setReceiptData(null)} 

@@ -104,7 +104,7 @@ function AppContent() {
     }
   };
 
-  // 🔥 EDITAR DEUDA - CORREGIDO CON interestPeriod
+  // 🔥 EDITAR DEUDA - CORREGIDO: AHORA INCLUYE LA MORA
   const handleEditDebt = async (debtId, editedDebt) => {
     console.log("✏️ Editando deuda en Supabase:", { debtId, editedDebt });
     
@@ -118,15 +118,16 @@ function AppContent() {
         startDate: editedDebt.startDate,
         principal: editedDebt.principal || editedDebt.totalAmount,
         interestRate: editedDebt.interestRate || 0,
-        interestPeriod: editedDebt.interestPeriod || 'monthly', // 🔥 CORREGIDO: Ahora se pasa interestPeriod
+        interestPeriod: editedDebt.interestPeriod || 'monthly',
         totalInterest: editedDebt.totalInterest || 0,
+        // 👇 AQUÍ ESTABA EL ERROR: Faltaba enviar este campo
+        lateFee: editedDebt.lateFee || 0 
       });
       
       if (result.success) {
         console.log('✅ Deuda editada y cuotas recalculadas en Supabase');
         setConfirmationMessage('✅ Deuda actualizada correctamente');
         await reloadDebts();
-        console.log('🔄 Deudas recargadas después de editar');
       } else {
         console.error('❌ Error editando deuda:', result.error);
         setConfirmationMessage('❌ Error al editar la deuda');
