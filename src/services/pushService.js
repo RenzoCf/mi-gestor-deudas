@@ -38,26 +38,30 @@ export async function registerPushNotification(userId) {
     });
 
     // 4. Guardar la suscripción en Supabase
-    // Primero revisamos si ya existe para no duplicar
-    
-    // 🔥 CORRECCIÓN AQUÍ: Cambiamos 'subscription->endpoint' a 'subscription->>endpoint'
-    const { data: existing } = await supabase
-        .from('push_subscriptions')
-        .select('id')
-        .eq('subscription->>endpoint', subscription.endpoint) // Usamos ->> para extraer el texto correctamente
-        .single();
+    // 🔥 NUEVA LÓGICA: Intentar INSERTAR directamente y manejar el error de duplicado (23505)
 
-    if (!existing) {
-        await supabase.from('push_subscriptions').insert({
-            user_id: userId,
-            subscription: subscription
-        });
-        console.log('✅ Suscripción Push guardada en BD');
+    const { error } = await supabase.from('push_subscriptions').insert({
+        user_id: userId,
+        subscription: subscription
+    });
+
+    if (error) {
+        // 23505 es el código de PostgreSQL para 'unique_violation'
+        if (error.code === '23505') { 
+            console.log('✅ Suscripción Push ya existía, no duplicada.');
+            // No hacemos nada, el proceso finaliza exitosamente
+            return true;
+        }
+        
+        // Si es otro error de inserción, lo lanzamos
+        throw error;
     }
-    
+
+    console.log('✅ Suscripción Push guardada en BD');
     return true;
 
   } catch (error) {
+    // Este error ahora solo capturará fallos de red, VAPID key o la inserción que no sea duplicado.
     console.error('Error al registrar Push:', error);
     return false;
   }
