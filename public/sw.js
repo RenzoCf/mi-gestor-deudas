@@ -1,3 +1,4 @@
+// renzocf/mi-gestor-deudas/mi-gestor-deudas-1bcd36dc9f1cded5c409edb60dffca9905c4cf0f/public/sw.js
 self.addEventListener('push', function(event) {
   const data = event.data.json();
   
