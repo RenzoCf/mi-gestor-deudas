@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import webpush from 'web-push'; // CAMBIO: Usamos web-push en vez de twilio
+import webpush from 'web-push'; 
 
 export default async function handler(req, res) {
   try {
@@ -24,24 +24,25 @@ export default async function handler(req, res) {
     );
 
     const supabase = createClient(supabaseUrl, supabaseKey);
+    // Ajustar a la zona horaria de Perú (-5 horas UTC)
     const peruTime = new Date(new Date().getTime() - (5 * 60 * 60 * 1000));
     const today = peruTime.toISOString().split('T')[0];
 
-    console.log(`🤖 [Push Bot] Revisando pagos para: ${today}`);
+    console.log(`🤖 [Push Bot] Revisando pagos vencidos hasta: ${today}`);
 
-    // 3. BUSCAR PAGOS DE HOY
+    // 3. BUSCAR PAGOS VENCIDOS Y DE HOY
     const { data: payments, error } = await supabase
       .from('payments')
       .select(`
         amount,
         debts (name, user_id)
       `)
-      .eq('date', today)
+      .lte('date', today) // 🔥 CORRECCIÓN: Busca todas las deudas vencidas hasta hoy (lte = less than or equal to).
       .eq('paid', false);
 
     if (error) throw error;
     if (!payments || payments.length === 0) {
-      return res.status(200).json({ status: 'Sin vencimientos hoy' });
+      return res.status(200).json({ status: 'Sin vencimientos pendientes hoy o antes' });
     }
 
     // 4. AGRUPAR Y NOTIFICAR
@@ -80,13 +81,18 @@ export default async function handler(req, res) {
                     sentCount++;
                 } catch (err) {
                     console.error('Error enviando push:', err);
-                    // Si da error 410 (Gone), significa que el usuario borró la suscripción/navegador
+                    
+                    // 🔥 CORRECCIÓN: Si da error 410 (Gone), significa que el usuario borró la suscripción/navegador
                     if (err.statusCode === 410) {
-                        // Opcional: Borrar suscripción inválida de la BD
-                        await supabase
-                           .from('push_subscriptions')
-                           .delete()
-                           .match({ subscription: subRecord.subscription }); // Esto requeriría lógica extra para match exacto JSON
+                        const endpoint = subRecord.subscription.endpoint; 
+                        if (endpoint) {
+                           // Borrar suscripción inválida usando el endpoint (más robusto que .match())
+                           await supabase
+                              .from('push_subscriptions')
+                              .delete()
+                              .eq('subscription->>endpoint', endpoint); 
+                           console.log(`Suscripción eliminada (endpoint: ${endpoint})`);
+                        }
                     }
                     errorCount++;
                 }
