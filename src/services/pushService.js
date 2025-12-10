@@ -39,10 +39,12 @@ export async function registerPushNotification(userId) {
 
     // 4. Guardar la suscripción en Supabase
     // Primero revisamos si ya existe para no duplicar
+    
+    // 🔥 CORRECCIÓN AQUÍ: Cambiamos 'subscription->endpoint' a 'subscription->>endpoint'
     const { data: existing } = await supabase
         .from('push_subscriptions')
         .select('id')
-        .eq('subscription->endpoint', subscription.endpoint) // Comparamos el endpoint único
+        .eq('subscription->>endpoint', subscription.endpoint) // Usamos ->> para extraer el texto correctamente
         .single();
 
     if (!existing) {
