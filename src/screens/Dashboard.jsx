@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import SummaryCards from "../components/dashboard/SummaryCards.jsx";
 import AddDebtModal from "../components/dashboard/AddDebtModal.jsx";
-import NotificationCenter from "../components/dashboard/NotificationCenter.jsx";
+import NotificationCenter from "../components/dashboard/NotificationCenter.jsx"; 
 import PaymentModal from "../components/dashboard/PaymentModal.jsx";
 import ReceiptModal from "../components/dashboard/ReceiptModal.jsx";
 import { useAuth } from "../context/AuthContext";
@@ -41,23 +41,8 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
     return debt.payments.filter(p => Math.abs(p.amount - debt.cuota) < 0.01);
   };
 
-  const createCalendarLink = (debtName, amount, dueDateStr) => {
-    const date = new Date(dueDateStr + "T00:00:00");
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const dateFormatted = `${yyyy}${mm}${dd}`;
-    const title = encodeURIComponent(`Pagar: ${debtName}`);
-    const details = encodeURIComponent(`Monto: S/ ${amount.toFixed(2)}`);
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&dates=${dateFormatted}/${dateFormatted}`;
-  };
-
-  // --- 2. SISTEMA DE NOTIFICACIONES ---
+  // --- 2. SISTEMA DE NOTIFICACIONES (LIMPIO: SOLO INTERNAS) ---
   useEffect(() => {
-    if ("Notification" in window && Notification.permission !== "granted") {
-      Notification.requestPermission();
-    }
-
     const checkNotifications = () => {
       if (!debts.length) return;
       const newNotifications = [];
@@ -74,23 +59,15 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
             newNotifications.push({
               type: 'today',
               icon: '🚨',
-              message: `¡HOY VENCE! ${exactMessage}`,
-              calendarLink: createCalendarLink(debt.name, nextUnpaid.amount, nextUnpaid.date)
+              message: `¡HOY VENCE! ${exactMessage}`
             });
-            if ("Notification" in window && Notification.permission === "granted") {
-              new Notification("⚠️ Vencimiento Hoy", { body: exactMessage, icon: '/vite.svg' });
-            }
           }
           else if ([7, 4, 1].includes(days)) {
             newNotifications.push({
               type: 'upcoming',
               icon: '📅',
-              message: `Recordatorio (${days} días restantes): ${exactMessage}`,
-              calendarLink: createCalendarLink(debt.name, nextUnpaid.amount, nextUnpaid.date)
+              message: `Recordatorio (${days} días restantes): ${exactMessage}`
             });
-            if ("Notification" in window && Notification.permission === "granted") {
-               new Notification(`📅 Recordatorio de Pago (${days} días)`, { body: exactMessage, icon: '/vite.svg' });
-            }
           }
           else if (days < 0) {
              newNotifications.push({
@@ -171,26 +148,14 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
             const payDate = new Date(payment.date + "T00:00:00");
             payDate.setHours(0, 0, 0, 0);
             const isPaid = payment.paid;
-            
-            // Reglas de visualización:
+            const daysDiff = getDaysUntilDue(payment.date);
+
             const isCurrentMonth = payDate.getMonth() === currentMonth && payDate.getFullYear() === currentYear;
             const isPast = payDate < today;
 
-            // Mostrar si es mes actual O (es pasado Y está pendiente)
-            // Si es pasado y pagado, solo sale en historial si coincide con mes actual o se fuerza lógica
-            // Para simplificar: En historial mostramos TODO lo pagado de este mes o meses anteriores si el usuario quiere ver "historial".
-            // Pero tu requerimiento fue estricto:
-            
-            // CONDICIÓN:
-            // 1. Si es mes actual, entra siempre.
-            // 2. Si es mes pasado:
-            //    - Si NO está pagado, entra siempre (para que lo pagues).
-            //    - Si SÍ está pagado, entra solo si showPaidDebts es true.
-            
-            const shouldShow = isCurrentMonth || (!isPaid && isPast) || (isPaid && showPaidDebts);
+            const shouldShow = (isCurrentMonth || (!isPaid && isPast)) || (showPaidDebts && isPaid);
 
             if (shouldShow) {
-                // Filtro interruptor final
                 if (showPaidDebts !== isPaid) return;
 
                 rows.push({
@@ -200,8 +165,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                     amount: payment.amount,
                     dueDate: payment.date,
                     isPaid: isPaid,
-                    daysUntilDue: getDaysUntilDue(payment.date),
-                    // Datos extra para el recibo
+                    daysUntilDue: daysDiff,
                     paidAt: payment.paidAt,
                     payment_method: payment.payment_method,
                     receipt_url: payment.receipt_url
@@ -303,7 +267,7 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
               {filteredDebts.length === 0 ? (
                   <tr><td colSpan="5" className="text-center py-10 text-gray-500">
                     {showPaidDebts 
-                        ? "No hay historial de pagos recientes." 
+                        ? "No tienes pagos registrados en el historial de este mes." 
                         : "¡Estás al día! No hay deudas pendientes por mostrar 🎉"}
                   </td></tr>
               ) : (
@@ -349,15 +313,6 @@ function Dashboard({ debts = [], onAddDebt, onUpdateDebt }) {
                         <div className="flex items-center justify-center gap-2">
                             {!item.isPaid ? (
                                 <>
-                                <a 
-                                    href={createCalendarLink(item.name, item.amount, item.dueDate)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-1.5 text-blue-600 border border-blue-200 bg-white rounded hover:bg-blue-50"
-                                    title="Agendar recordatorio"
-                                >
-                                    📲
-                                </a>
                                 <button
                                   onClick={() => handleInitiatePayment(item.originalDebtId, item.paymentId, item.amount, item.lender)}
                                   className="p-1.5 text-green-600 border border-green-200 bg-white rounded hover:bg-green-50 font-bold flex items-center gap-1"
