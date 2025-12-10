@@ -37,7 +37,7 @@ export default async function handler(req, res) {
         amount,
         debts (name, user_id)
       `)
-      .lte('date', today) // 🔥 CORRECCIÓN: Busca todas las deudas vencidas hasta hoy (lte = less than or equal to).
+      .lte('date', today) // 🔥 CORRECCIÓN: Busca todas las deudas vencidas hasta hoy.
       .eq('paid', false);
 
     if (error) throw error;
@@ -68,10 +68,12 @@ export default async function handler(req, res) {
         
         if (subscriptions && subscriptions.length > 0) {
             const debtsList = notificationsToSend[userId].join(', ');
+            
+            // 🔥 CORRECCIÓN DE MENSAJE Y URL
             const payload = JSON.stringify({
-                title: '¡Vencimiento de Deuda!',
-                body: `Hoy vence: ${debtsList}. Entra a pagar para evitar moras.`,
-                url: 'https://mi-gestor-deudas.vercel.app/dashboard' // Tu URL
+                title: '¡Recordatorio de Deuda!', // Título más general
+                body: `Tienes pagos pendientes vencidos o con vencimiento hoy: ${debtsList}. Entra a pagar.`, 
+                url: 'https://[TU-NOMBRE-DE-PROYECTO].vercel.app/dashboard' // ¡CORREGIR CON TU URL REAL!
             });
 
             // Enviamos a todos los dispositivos del usuario (PC, Celular, etc)
@@ -82,11 +84,10 @@ export default async function handler(req, res) {
                 } catch (err) {
                     console.error('Error enviando push:', err);
                     
-                    // 🔥 CORRECCIÓN: Si da error 410 (Gone), significa que el usuario borró la suscripción/navegador
+                    // CORRECCIÓN: Si da error 410 (Gone), eliminar suscripción
                     if (err.statusCode === 410) {
                         const endpoint = subRecord.subscription.endpoint; 
                         if (endpoint) {
-                           // Borrar suscripción inválida usando el endpoint (más robusto que .match())
                            await supabase
                               .from('push_subscriptions')
                               .delete()

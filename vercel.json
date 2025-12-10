@@ -1,5 +1,15 @@
 {
+  "crons": [
+    {
+      "path": "/api/notify",
+      "schedule": "0 13 * * *"
+    }
+  ],
   "rewrites": [
+    {
+      "source": "/api/notify",
+      "destination": "/api/notify.js"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
